@@ -1,0 +1,46 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPERACIONAL_ROOT: /var/lib/operacional
+      APP_USERNAME: ${APP_USERNAME}
+      APP_PASSWORD: ${APP_PASSWORD}
+      CARTEIRA_SOURCE_PATH: /sources/carteira
+      ONDA_SOURCE_PATH: /sources/onda
+      CARTEIRA_SCHEDULE: '${CARTEIRA_SCHEDULE}'
+      ONDA_SCHEDULE: '${ONDA_SCHEDULE}'
+    volumes:
+      - operacional_data:/var/lib/operacional
+      - ./sources:/sources:ro
+    expose:
+      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [operacional]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_ADDRESS: ${APP_ADDRESS:-:80}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./oracle-cloud/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [operacional]
+
+networks:
+  operacional:
+
+volumes:
+  operacional_data:
+  caddy_data:
+  caddy_config:

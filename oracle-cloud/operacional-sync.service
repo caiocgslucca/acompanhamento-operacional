@@ -1,0 +1,11 @@
+[Unit]
+Description=Sincronização SharePoint do Acompanhamento Operacional
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/acompanhamento-operacional
+EnvironmentFile=/etc/operacional-sync.env
+ExecStart=/opt/acompanhamento-operacional/oracle-cloud/sincronizar_sharepoint.sh

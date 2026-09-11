@@ -1,0 +1,6 @@
+{
+  "server_url": "https://SEU-PROJETO.up.railway.app",
+  "api_key": "COLE_A_MESMA_SYNC_API_KEY_DO_RAILWAY",
+  "interval_minutes": 5,
+  "sources": {}
+}

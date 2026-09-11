@@ -1,0 +1,14 @@
+.venv
+build
+dist
+data
+logs
+sources
+__pycache__
+*.pyc
+.pytest_cache
+.git
+tools
+ENDERECO_ONLINE.txt
+sync_config.json
+sync_state.json
