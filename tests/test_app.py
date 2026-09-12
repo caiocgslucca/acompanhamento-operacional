@@ -66,6 +66,17 @@ def test_configuration_validation():
     invalid=client.post('/api/configuracoes/settings',json={"max_jobs":0,"page_size":100,"cache_seconds":300,"query_timeout":30})
     assert invalid.status_code==422
 
+def test_report_export_configuration(monkeypatch,tmp_path):
+    key='chave-de-sincronizacao-com-32-caracteres';monkeypatch.setenv('SYNC_API_KEY',key)
+    payload={'destination_path':str(tmp_path),'filename':'carteira_atual.pdf','schedule':'{"type":"interval","value":15,"unit":"Minuto(s)"}','enabled':True}
+    saved=client.put('/api/report-config/carteira',json=payload)
+    assert saved.status_code==200 and saved.json()['data']['filename']=='carteira_atual.pdf'
+    assert client.get('/api/report-config/carteira').json()['data']['enabled']==1
+    reports=client.get('/api/sync/reports',headers={'X-Sync-Key':key}).json()['reports']
+    assert any(item['module']=='carteira' and item['destination_path']==str(tmp_path) for item in reports)
+    payload['enabled']=False
+    assert client.put('/api/report-config/carteira',json=payload).status_code==200
+
 def test_native_path_picker_endpoint(monkeypatch,tmp_path):
     from app.screens import configuracoes
     monkeypatch.setattr(configuracoes,'open_native_dialog',lambda mode: str(tmp_path) if mode=='folder' else None)

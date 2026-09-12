@@ -100,6 +100,13 @@ def configured_sources(config,client,server,key,log):
     explicit=config.get('sources') or database_sources()
     return {name:{'path':path,'revision':0} for name,path in explicit.items()}
 
+def configured_reports(client,server,key,log):
+    try:
+        response=client.get(f'{server}/api/sync/reports',headers={'X-Sync-Key':key});response.raise_for_status()
+        return response.json().get('reports') or []
+    except Exception as exc:
+        log.warning('CONFIG_RELATORIOS_INDISPONIVEL | erro=%s',exc);return []
+
 def fingerprint(files,base):
     digest=hashlib.sha256()
     for path in files:
@@ -173,6 +180,36 @@ def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None
 def save_state(state):
     STATE.parent.mkdir(parents=True,exist_ok=True);temporary=STATE.with_suffix('.tmp');temporary.write_text(json.dumps(state,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(temporary,STATE)
 
+def export_report(client,server,key,report,state,log):
+    module=report['module'];schedule_source={'path':f'report::{module}','schedule':report.get('schedule'),'revision':0}
+    due,remote=schedule_due(schedule_source,state)
+    if not due:
+        log.info('PDF_AGUARDANDO_JANELA | modulo=%s | agendamento=%s',module,report.get('schedule'));return state
+    destination=Path(report['destination_path']);destination.mkdir(parents=True,exist_ok=True)
+    filename=Path(report['filename']).name
+    if not filename.lower().endswith('.pdf'):filename+='.pdf'
+    target=destination/filename;temporary=destination/f'.{filename}.novo'
+    headers={'X-Sync-Key':key}
+    try:
+        client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'RUNNING','message':'Gerando PDF'}).raise_for_status()
+        log.info('PDF_GERACAO_INICIADA | modulo=%s | destino=%s',module,target)
+        with client.stream('GET',f'{server}/api/sync/report/{module}/pdf',headers=headers) as response:
+            response.raise_for_status()
+            with temporary.open('wb') as output:
+                for chunk in response.iter_bytes(1024*1024):output.write(chunk)
+        if temporary.stat().st_size<4 or temporary.read_bytes()[:4]!=b'%PDF':raise ValueError('O servidor não retornou um PDF válido.')
+        os.replace(temporary,target)
+        mark_schedule_checked(state,remote,0);save_state(state)
+        message=f'PDF substituído com sucesso: {target}'
+        client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'SUCCESS','message':message}).raise_for_status()
+        log.info('PDF_GERACAO_CONCLUIDA | modulo=%s | arquivo=%s | tamanho_kb=%.1f',module,target,target.stat().st_size/1024)
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        try:client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'ERROR','message':str(exc)[:500]}).raise_for_status()
+        except Exception:pass
+        log.exception('PDF_GERACAO_FALHOU | modulo=%s | erro=%s',module,exc)
+    return state
+
 def run_once(config,log):
     server=str(config.get('server_url','')).strip().rstrip('/');key=str(config.get('api_key','')).strip()
     if not server.startswith('https://'):raise ValueError('Informe no sync_config.json o endereço HTTPS do Railway.')
@@ -199,6 +236,8 @@ def run_once(config,log):
                     try:optional_sync_event(client,f"{server}/api/sync/source-error/{source['source_id']}",{'X-Sync-Key':key},log,'erro',{'error':str(exc)[:500]})
                     except Exception:pass
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
+        for report in configured_reports(client,server,key,log):
+            state=export_report(client,server,key,report,state,log)
     if failures:raise RuntimeError('Falha em uma ou mais fontes: '+'; '.join(failures))
 
 def main():

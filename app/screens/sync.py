@@ -1,6 +1,8 @@
 import hashlib
 import hmac
+import json
 import os
+import re
 import shutil
 import time
 import zipfile
@@ -23,6 +25,16 @@ class PickerResult(BaseModel):
     selected_path:str=''
     error:str=''
 class SourceError(BaseModel):error:str=Field(min_length=1,max_length=500)
+class ReportConfig(BaseModel):
+    destination_path:str=Field(min_length=1,max_length=500)
+    filename:str=Field(min_length=1,max_length=180)
+    schedule:str=Field(min_length=2,max_length=500)
+    enabled:bool=False
+class ReportResult(BaseModel):
+    status:str=Field(pattern='^(SUCCESS|ERROR|RUNNING)$')
+    message:str=Field(default='',max_length=500)
+
+REPORT_MODULES={'carteira':'Carteira','reab':'Reab','producao':'Demanda e Produção'}
 
 def _authorize(key):
     expected=os.getenv('SYNC_API_KEY','').strip()
@@ -55,6 +67,50 @@ def sync_config(x_sync_key:str|None=Header(None)):
         if origin and item.get('enabled'):
             sources.append({'id':item['id'],'name':name,'key':f"source-{item['id']}",'path':origin,'schedule':item.get('schedule'),'revision':item.get('sync_revision') or 0})
     return {'ok':True,'sources':sources}
+
+@router.get('/api/report-config/{module}')
+def report_config(module:str):
+    if module not in REPORT_MODULES:raise HTTPException(404,'Módulo de relatório inválido.')
+    current=store.get_report_export(module) or {'module':module,'destination_path':'','filename':f'{module}.pdf','schedule':'{"type":"interval","value":30,"unit":"Minuto(s)"}','enabled':0,'last_run':None,'status':'IDLE','status_message':''}
+    return {'ok':True,'data':current}
+
+@router.put('/api/report-config/{module}')
+def update_report_config(module:str,payload:ReportConfig):
+    if module not in REPORT_MODULES:raise HTTPException(404,'Módulo de relatório inválido.')
+    filename=payload.filename.strip()
+    if any(char in filename for char in '<>:"/\\|?*'):raise HTTPException(422,'O nome do PDF contém caracteres inválidos.')
+    if not filename.lower().endswith('.pdf'):filename+='.pdf'
+    try:schedule=json.loads(payload.schedule)
+    except json.JSONDecodeError:raise HTTPException(422,'Agendamento inválido.')
+    if schedule.get('type') not in ('manual','interval','daily','weekly'):raise HTTPException(422,'Tipo de agendamento inválido.')
+    saved=store.save_report_export(module,{'destination_path':payload.destination_path,'filename':filename,'schedule':json.dumps(schedule,ensure_ascii=False),'enabled':payload.enabled})
+    return {'ok':True,'data':saved}
+
+@router.get('/api/sync/reports')
+def sync_reports(x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    return {'ok':True,'reports':store.list_report_exports(enabled_only=True)}
+
+@router.get('/api/sync/report/{module}/pdf')
+def sync_report_pdf(module:str,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    if module=='carteira':
+        from app.screens.carteira import pdf
+        return pdf([],[],[])
+    elif module=='reab':
+        from app.screens.reab import pdf
+        return pdf([],[],[])
+    elif module=='producao':
+        from app.screens.producao import pdf
+        return pdf([],[],[],[],[])
+    else:raise HTTPException(404,'Módulo de relatório inválido.')
+
+@router.post('/api/sync/report/{module}/result')
+def sync_report_result(module:str,payload:ReportResult,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    if module not in REPORT_MODULES:raise HTTPException(404,'Módulo de relatório inválido.')
+    store.set_report_export_result(module,payload.status,payload.message,payload.status=='SUCCESS')
+    return {'ok':True}
 
 @router.get('/api/sync/picker/request')
 def sync_picker_request(x_sync_key:str|None=Header(None)):

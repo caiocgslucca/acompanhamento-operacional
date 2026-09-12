@@ -39,6 +39,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL, schedule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS picker_requests (id TEXT PRIMARY KEY, mode TEXT NOT NULL, status TEXT NOT NULL, selected_path TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS report_exports (module TEXT PRIMARY KEY, destination_path TEXT NOT NULL DEFAULT '', filename TEXT NOT NULL, schedule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, last_run TEXT, status TEXT NOT NULL DEFAULT 'IDLE', status_message TEXT NOT NULL DEFAULT '');
         """)
         columns={row[1] for row in con.execute("PRAGMA table_info(sources)")}
         for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL"),("origin_path","TEXT","''"),("sync_revision","INTEGER","0")):
@@ -70,6 +71,30 @@ def initialize():
                 con.execute("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,1)",(name,path,schedule))
         con.execute("UPDATE sources SET origin_path=path WHERE COALESCE(origin_path,'')='' AND path NOT LIKE '%cloud_sources%'")
     logger.info("STARTUP | Banco de configurações inicializado | db=%s", DB_PATH)
+
+def get_report_export(module):
+    with connect() as con:
+        row=con.execute("SELECT * FROM report_exports WHERE module=?",(module,)).fetchone()
+        return dict(row) if row else None
+
+def save_report_export(module,data):
+    with _lock, connect() as con:
+        con.execute("""INSERT INTO report_exports(module,destination_path,filename,schedule,enabled,status,status_message)
+            VALUES(?,?,?,?,?,'IDLE','Configuração salva')
+            ON CONFLICT(module) DO UPDATE SET destination_path=excluded.destination_path,filename=excluded.filename,schedule=excluded.schedule,enabled=excluded.enabled,status_message='Configuração atualizada'""",
+            (module,data['destination_path'].strip(),data['filename'].strip(),data['schedule'].strip(),int(data.get('enabled',False))))
+    logger.info('REPORT_EXPORT_SAVED | modulo=%s | ativo=%s',module,bool(data.get('enabled')))
+    return get_report_export(module)
+
+def list_report_exports(enabled_only=False):
+    sql="SELECT * FROM report_exports"+(" WHERE enabled=1" if enabled_only else "")+" ORDER BY module"
+    with connect() as con:return [dict(row) for row in con.execute(sql)]
+
+def set_report_export_result(module,status,message,completed=False):
+    from datetime import datetime, timezone
+    with _lock, connect() as con:
+        if completed:con.execute("UPDATE report_exports SET status=?,status_message=?,last_run=? WHERE module=?",(status,str(message)[:500],datetime.now(timezone.utc).isoformat(timespec='seconds'),module))
+        else:con.execute("UPDATE report_exports SET status=?,status_message=? WHERE module=?",(status,str(message)[:500],module))
 
 def list_sources():
     with connect() as con: return [dict(row) for row in con.execute("SELECT * FROM sources ORDER BY id")]
