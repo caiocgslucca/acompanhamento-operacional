@@ -96,6 +96,18 @@ def touch_source_check(source_id):
         cur=con.execute("UPDATE sources SET last_run=?,status='SUCCESS' WHERE id=?",(datetime.now(timezone.utc).isoformat(timespec='seconds'),source_id))
         if not cur.rowcount:raise KeyError(source_id)
 
+def mark_source_running(source_id):
+    """Marca o início real sem alterar o horário da última conclusão."""
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE sources SET status='RUNNING',status_message='Lendo e enviando arquivos do computador' WHERE id=?",(source_id,))
+        if not cur.rowcount:raise KeyError(source_id)
+
+def mark_source_error(source_id,message):
+    """Registra falha sem substituir o horário da última conclusão válida."""
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE sources SET status='ERROR',status_message=? WHERE id=?",(str(message)[:500],source_id))
+        if not cur.rowcount:raise KeyError(source_id)
+
 def get_settings():
     with connect() as con: return json.loads(con.execute("SELECT payload FROM settings WHERE id=1").fetchone()[0])
 

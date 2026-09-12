@@ -141,13 +141,20 @@ def schedule_due(source,state):
 def mark_schedule_checked(state,remote,revision):
     state.setdefault('_schedule_meta',{})[remote]={'checked_at':datetime.now().isoformat(timespec='seconds'),'revision':int(revision or 0)}
 
+def optional_sync_event(client,url,headers,log,event,json_body=None):
+    """Eventos de estado não podem impedir o envio durante uma troca de versão."""
+    response=client.post(url,headers=headers,json=json_body)
+    if response.status_code==404:
+        log.warning('SERVIDOR_AGUARDANDO_NOVA_VERSAO | evento=%s | envio_continuara',event);return False
+    response.raise_for_status();return True
+
 def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None):
     remote=f'source-{source_id}' if source_id else REMOTE_KEYS.get(clean(name))
     if not remote:return previous
     base=Path(path_text);files=source_files(path_text)
     if not files:raise ValueError(f'Caminho não encontrado, vazio ou sem arquivos compatíveis: {path_text}')
     current=fingerprint(files,base);state_key=f'{current}:{revision}'
-    if previous.get(remote)==state_key:log.info('SEM_ALTERACAO | fonte=%s | arquivos=%s',name,len(files));return previous
+    if previous.get(remote)==state_key:log.info('ARQUIVOS_SEM_ALTERACAO | fonte=%s | reenviando_por_agendamento=true',name)
     archive=make_archive(files,base)
     try:
         package_hash=hashlib.sha256(archive.read_bytes()).hexdigest();log.info('ENVIO_INICIADO | fonte=%s | arquivos=%s | tamanho_mb=%.1f',name,len(files),archive.stat().st_size/1048576)
@@ -181,11 +188,16 @@ def run_once(config,log):
             if not due:
                 log.info('FONTE_AGUARDANDO_JANELA | fonte=%s | agendamento=%s',name,source.get('schedule'));continue
             try:
+                if source.get('source_id'):
+                    optional_sync_event(client,f"{server}/api/sync/source-start/{source['source_id']}",{'X-Sync-Key':key},log,'inicio')
                 state=send(client,server,key,name,source['path'],state,log,source.get('revision',0),source.get('source_id'))
                 if source.get('source_id'):
-                    checked=client.post(f"{server}/api/sync/source-check/{source['source_id']}",headers={'X-Sync-Key':key});checked.raise_for_status()
+                    optional_sync_event(client,f"{server}/api/sync/source-check/{source['source_id']}",{'X-Sync-Key':key},log,'conclusao')
                 mark_schedule_checked(state,remote,source.get('revision',0));save_state(state)
             except Exception as exc:
+                if source.get('source_id'):
+                    try:optional_sync_event(client,f"{server}/api/sync/source-error/{source['source_id']}",{'X-Sync-Key':key},log,'erro',{'error':str(exc)[:500]})
+                    except Exception:pass
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
     if failures:raise RuntimeError('Falha em uma ou mais fontes: '+'; '.join(failures))
 

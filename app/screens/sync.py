@@ -22,6 +22,7 @@ class PickerResult(BaseModel):
     request_id:str=Field(min_length=32,max_length=32)
     selected_path:str=''
     error:str=''
+class SourceError(BaseModel):error:str=Field(min_length=1,max_length=500)
 
 def _authorize(key):
     expected=os.getenv('SYNC_API_KEY','').strip()
@@ -72,6 +73,20 @@ def sync_picker_result(payload:PickerResult,x_sync_key:str|None=Header(None)):
 def sync_source_check(source_id:int,x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key)
     try:store.touch_source_check(source_id)
+    except KeyError:raise HTTPException(404,'Fonte não encontrada.')
+    return {'ok':True,'source_id':source_id}
+
+@router.post('/api/sync/source-start/{source_id}')
+def sync_source_start(source_id:int,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    try:store.mark_source_running(source_id)
+    except KeyError:raise HTTPException(404,'Fonte não encontrada.')
+    return {'ok':True,'source_id':source_id}
+
+@router.post('/api/sync/source-error/{source_id}')
+def sync_source_error(source_id:int,payload:SourceError,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    try:store.mark_source_error(source_id,payload.error)
     except KeyError:raise HTTPException(404,'Fonte não encontrada.')
     return {'ok':True,'source_id':source_id}
 
