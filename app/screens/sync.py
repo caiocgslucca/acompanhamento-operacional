@@ -48,10 +48,10 @@ def sync_config(x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key)
     sources=[]
     for item in store.list_sources():
-        name=item['name'].strip();key=next((key for key,value in ALLOWED.items() if value.upper()==name.upper()),None)
+        name=item['name'].strip()
         origin=(item.get('origin_path') or '').strip()
-        if key and origin and item.get('enabled'):
-            sources.append({'id':item['id'],'name':name,'key':key,'path':origin,'schedule':item.get('schedule'),'revision':item.get('sync_revision') or 0})
+        if origin and item.get('enabled'):
+            sources.append({'id':item['id'],'name':name,'key':f"source-{item['id']}",'path':origin,'schedule':item.get('schedule'),'revision':item.get('sync_revision') or 0})
     return {'ok':True,'sources':sources}
 
 @router.get('/api/sync/picker/request')
@@ -69,7 +69,13 @@ def sync_picker_result(payload:PickerResult,x_sync_key:str|None=Header(None)):
 
 @router.post('/api/sync/source/{source_key}')
 def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|None=Header(None),x_content_sha256:str|None=Header(None)):
-    _authorize(x_sync_key);name=ALLOWED.get(source_key.lower())
+    _authorize(x_sync_key);source_id=None;name=ALLOWED.get(source_key.lower())
+    if source_key.lower().startswith('source-'):
+        try:source_id=int(source_key.split('-',1)[1])
+        except ValueError:raise HTTPException(404,'Identificador de fonte inválido.')
+        configured=store.get_source(source_id)
+        if not configured or not configured.get('enabled'):raise HTTPException(404,'Fonte não encontrada ou desativada.')
+        name=configured['name'].strip()
     if not name:raise HTTPException(404,'Fonte não autorizada para sincronização.')
     root=store.DATA_DIR/'cloud_sources'/source_key.lower();incoming=root/'incoming';incoming.mkdir(parents=True,exist_ok=True)
     stamp=f'{int(time.time()*1000)}-{os.getpid()}';package=incoming/f'{stamp}.zip';digest=hashlib.sha256();size=0;limit=int(os.getenv('SYNC_MAX_UPLOAD_MB','250'))*1024*1024
@@ -87,8 +93,8 @@ def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|No
             for item,relative in members:
                 destination=version.joinpath(*relative.parts);destination.parent.mkdir(parents=True,exist_ok=True)
                 with book.open(item) as source,destination.open('wb') as target:shutil.copyfileobj(source,target,8*1024*1024)
-        previous=next((s for s in store.list_sources() if s['name'].strip().upper()==name.upper()),None);previous_path=previous['path'] if previous else None
-        source_id=store.upsert_synced_source(name,version);run_source(source_id);status=store.get_source(source_id)
+        previous=store.get_source(source_id) if source_id else next((s for s in store.list_sources() if s['name'].strip().upper()==name.upper()),None);previous_path=previous['path'] if previous else None
+        source_id=store.publish_synced_source(source_id,version) if source_id else store.upsert_synced_source(name,version);run_source(source_id);status=store.get_source(source_id)
         if status.get('status')!='SUCCESS':
             if previous_path:
                 store.restore_source_runtime(source_id,previous_path)

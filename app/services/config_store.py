@@ -116,6 +116,15 @@ def upsert_synced_source(name,path):
     logger.info("SYNC_SOURCE_PUBLISHED | id=%s | fonte=%s | caminho=%s",source_id,name,path)
     return source_id
 
+def publish_synced_source(source_id,path):
+    """Publica os arquivos recebidos mantendo a identidade e o agendamento da fonte."""
+    with _lock, connect() as con:
+        row=con.execute("SELECT id,name FROM sources WHERE id=?",(source_id,)).fetchone()
+        if not row:raise KeyError(source_id)
+        con.execute("UPDATE sources SET path=? WHERE id=?",(str(path),source_id))
+    logger.info("SYNC_SOURCE_PUBLISHED | id=%s | fonte=%s | caminho=%s",source_id,row['name'],path)
+    return source_id
+
 def restore_source_runtime(source_id,path):
     with _lock, connect() as con: con.execute("UPDATE sources SET path=? WHERE id=?",(str(path),source_id))
 

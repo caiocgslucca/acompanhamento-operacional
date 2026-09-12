@@ -20,7 +20,7 @@ REMOTE_KEYS={'CARTEIRA':'carteira','ONDA':'onda','LOJAS':'lojas','LOJA':'lojas',
 
 def native_select(mode):
     if os.name!='nt':return ''
-    owner="$o=New-Object System.Windows.Forms.Form;$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.StartPosition='Manual';$o.Location=New-Object System.Drawing.Point -ArgumentList (-32000),(-32000);$o.Size=New-Object System.Drawing.Size -ArgumentList 1,1;$o.Show();$o.Activate();"
+    owner="$o=New-Object System.Windows.Forms.Form;$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.StartPosition='CenterScreen';$o.Size=New-Object System.Drawing.Size -ArgumentList 1,1;$o.Opacity=0.01;$o.Show();$o.Activate();$o.BringToFront();"
     if mode=='folder':
         script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar pasta de dados';$d.ShowNewFolderButton=$false;if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$d.Dispose();$o.Close();$o.Dispose()"
     else:
@@ -86,14 +86,14 @@ def database_sources():
     if not database.exists():return {}
     with sqlite3.connect(database) as connection:
         rows=connection.execute('SELECT name,path FROM sources WHERE enabled=1').fetchall()
-    return {name:path for name,path in rows if clean(name) in REMOTE_KEYS and source_files(path)}
+    return {name:path for name,path in rows if source_files(path)}
 
 def configured_sources(config,client,server,key,log):
     try:
         response=client.get(f'{server}/api/sync/config',headers={'X-Sync-Key':key});response.raise_for_status()
         remote=response.json().get('sources') or []
         if remote:
-            return {item['name']:{'path':item['path'],'revision':item.get('revision',0)} for item in remote if clean(item.get('name')) in REMOTE_KEYS}
+            return {item['name']:{'path':item['path'],'revision':item.get('revision',0),'source_id':item.get('id')} for item in remote}
     except Exception as exc:
         log.warning('CONFIG_REMOTA_INDISPONIVEL | usando configuração local | erro=%s',exc)
     explicit=config.get('sources') or database_sources()
@@ -113,8 +113,8 @@ def make_archive(files,base):
         for path in files:book.write(path,path.name if base.is_file() else path.relative_to(base).as_posix())
     return archive
 
-def send(client,server,key,name,path_text,previous,log,revision=0):
-    remote=REMOTE_KEYS.get(clean(name))
+def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None):
+    remote=f'source-{source_id}' if source_id else REMOTE_KEYS.get(clean(name))
     if not remote:return previous
     base=Path(path_text);files=source_files(path_text)
     if not files:log.warning('FONTE_IGNORADA | fonte=%s | caminho não encontrado ou vazio=%s',name,path_text);return previous
@@ -145,7 +145,7 @@ def run_once(config,log):
         sources=configured_sources(config,client,server,key,log)
         if not sources:raise ValueError('Nenhuma fonte ativa foi cadastrada na tela Configurações do sistema.')
         for name,source in sources.items():
-            try:state=send(client,server,key,name,source['path'],state,log,source.get('revision',0));save_state(state)
+            try:state=send(client,server,key,name,source['path'],state,log,source.get('revision',0),source.get('source_id'));save_state(state)
             except Exception as exc:
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
     if failures:raise RuntimeError('Falha em uma ou mais fontes: '+'; '.join(failures))
