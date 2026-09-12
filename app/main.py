@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import time
 from urllib.parse import quote
-from app.screens import home, carteira, reab, producao, recebimento, expedicao, inventario, reversa, cargas, saude, configuracoes, sync
+from app.screens import home, carteira, reab, producao, saude, configuracoes, sync
 
 app = FastAPI(title="Acompanhamento Operacional", version="1.0.0")
 RESOURCE_ROOT=Path(getattr(sys,"_MEIPASS",Path.cwd()))
@@ -63,8 +63,7 @@ async def disable_api_cache(request: Request, call_next):
         response.headers['Expires']='0'
     return response
 
-for router in (home.router, carteira.router, reab.router, producao.router, recebimento.router, expedicao.router,
-               inventario.router, reversa.router, cargas.router, saude.router,
+for router in (home.router, carteira.router, reab.router, producao.router, saude.router,
                configuracoes.router, sync.router):
     app.include_router(router)
 

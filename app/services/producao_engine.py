@@ -17,7 +17,7 @@ def build(filters=None):
     cd_onda=col(carteira,'CD_ONDA');onda_key=col(onda,'CD_ONDA');onda_name=col(onda,'DS_ONDA','DS_ONDA_VARCHAR2')
     produto=col(carteira,'QT_PRODUTO');cancelado=col(carteira,'QT_CANCELADO','QT_CANCELADA');separado=col(carteira,'QT_SEPARADO');pendente=col(carteira,'QTD_PENDENTE')
     classe=col(carteira,'CD_CLASSE','CLASSE');data_oficial=col(carteira,'DATA_OFICIAL','DATA OFICIAL');empresa=col(carteira,'CD_EMPRESA','EMPRESA','FILIAL')
-    turno=col(carteira,'CD_TURNO','TURNO');rota=col(carteira,'ROTA_CHAR','CD_ROTA','ROTA')
+    turno_rota=col(carteira,'TURNO ROTA CHAR','TURNO_ROTA_CHAR','ROTA_CHAR','CD_ROTA','ROTA')
     missing=[label for label,value in [('CD_ONDA',cd_onda),('QT_PRODUTO',produto),('QT_CANCELADO',cancelado),('QT_SEPARADO',separado),('QTD_PENDENTE',pendente)] if not value]
     if not onda_key or not onda_name:missing.append('Onda: CD_ONDA/DS_ONDA')
     if missing:raise ValueError('Colunas obrigatórias ausentes: '+', '.join(missing))
@@ -29,7 +29,7 @@ def build(filters=None):
     data=data.with_columns(pl.when(pl.col(label).fill_null('')=='').then(pl.lit('Onda não cadastrada')).otherwise(pl.col(label)).alias(label))
     data=data.filter(text_expr(cd_onda)!='')
     options={}
-    for name,column in {'empresa':empresa,'classe':classe,'data':data_oficial,'turno':turno,'rota':rota}.items():
+    for name,column in {'empresa':empresa,'classe':classe,'data':data_oficial,'turno_rota':turno_rota}.items():
         sort_key=_date_key if name=='data' else natural_key
         values=sorted((v for v in data.select(text_expr(column).alias('v')).unique().get_column('v').to_list() if v),key=sort_key) if column else []
         options[name]=values;selected=filters.get(name) or []

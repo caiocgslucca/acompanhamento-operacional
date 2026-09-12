@@ -35,8 +35,13 @@ def test_professional_login_session(monkeypatch):
     assert client.get('/api/health').status_code==200
     client.get('/logout')
 def test_pages():
-    for path in ['/','/carteira','/reab','/producao','/recebimento','/expedicao','/inventario','/reversa','/cargas','/saude','/configuracoes']:
+    for path in ['/','/carteira','/reab','/producao','/saude','/configuracoes']:
         response=client.get(path); assert response.status_code==200; assert 'Leo Madeiras' in response.text
+    for path in ['/recebimento','/expedicao','/inventario','/reversa','/cargas']:
+        assert client.get(path).status_code==404
+    assert 'Classe</small>' not in client.get('/carteira').text
+    assert 'Classe</small>' not in client.get('/reab').text
+    assert 'TURNO ROTA CHAR' in client.get('/producao').text
 
 def test_configuration_crud_and_logs():
     from uuid import uuid4
@@ -121,9 +126,9 @@ def test_carteira_groups_multiple_files_and_builds_matrices(tmp_path):
         assert production['data']['totals']['produzir']==175 and production['data']['totals']['separado']==110
         assert production['data']['filters']['data']==['2026-09-04','2026-09-05']
         assert set(production['data']['filters']['empresa'])=={'1500','1502'}
-        assert set(production['data']['filters']['rota'])=={'101','102'}
+        assert set(production['data']['filters']['turno_rota'])=={'101','102'}
         assert len(production['data']['rows'])==2
-        production_filtered=client.get('/api/producao/data',params={'empresa':'1500','rota':'101'}).json()['data']
+        production_filtered=client.get('/api/producao/data',params={'empresa':'1500','turno_rota':'101'}).json()['data']
         assert production_filtered['totals']['produzir']==100
         production_pdf=client.get('/api/producao/pdf',params={'empresa':'1500'})
         assert production_pdf.status_code==200 and production_pdf.content.startswith(b'%PDF')

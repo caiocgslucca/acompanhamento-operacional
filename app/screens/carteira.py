@@ -9,7 +9,7 @@ from app.services.job_manager import run_source, data_revision
 from app.services.scheduler_service import next_run_for
 
 router=APIRouter()
-FILTER_LABELS=(('empresa','Filial'),('classe','Classe'),('rota','Rota'),('status','Status da separação'))
+FILTER_LABELS=(('empresa','Filial'),('rota','Rota'),('status','Status da separação'))
 
 @router.get('/carteira',response_class=HTMLResponse)
 def page():
@@ -17,12 +17,12 @@ def page():
     content=f'''<div id="toast" class="toast" role="status"></div><div class="carteira-head"><div><p>Visão consolidada de todas as filiais e arquivos publicados.</p><div id="carteira-meta" class="data-meta">Preparando visão consolidada…</div><div class="update-timeline"><span id="carteira-status" class="status-badge idle">Aguardando dados</span><span id="carteira-updated">Última atualização: —</span><span id="carteira-next">Próxima atualização: —</span></div></div><div class="carteira-actions"><a id="export-carteira" class="btn secondary" href="/api/carteira/pdf">▧ Gerar relatório PDF</a><button id="refresh-carteira" class="btn primary">↻ Atualizar Carteira</button></div></div><div id="carteira-filters" class="filter-panel">{filters}<button id="clear-carteira-filters" class="clear-filter">Limpar filtros</button></div><div id="carteira-error" class="data-error hidden"></div><div id="carteira-loading" class="matrix-loading"><i></i><b>Consolidando arquivos e calculando matrizes…</b><span>A interface permanece disponível durante o processamento.</span></div><div id="carteira-content" class="matrix-grid hidden"><section class="matrix-panel"><div class="matrix-title"><div><small>CARTEIRA POR FAIXA · CLASSE FIXA ZCHP</small><h2>DS × Onda</h2></div><strong id="aging-total">0</strong></div><div id="matrix-aging" class="matrix-scroll"></div></section><section class="matrix-panel"><div class="matrix-title"><div><small>CARTEIRA POR CLASSE</small><h2>Classe × Onda</h2></div><strong id="class-total">0</strong></div><div id="matrix-class" class="matrix-scroll"></div></section></div>'''
     return layout('Acompanhamento Carteira Geral','/carteira',content)
 
-def filters_dict(empresa,classe,rota,status):return {'empresa':empresa,'classe':classe,'rota':rota,'status':status}
+def filters_dict(empresa,rota,status):return {'empresa':empresa,'classe':[],'rota':rota,'status':status}
 
 @router.get('/api/carteira/data')
-def data(empresa:list[str]=Query([]),classe:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
+def data(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
     try:
-        result=build(filters_dict(empresa,classe,rota,status)); source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
+        result=build(filters_dict(empresa,rota,status)); source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
         result['meta']['next_run']=next_run_for(source['id']) if source else None
         related=[s.get('last_run') for s in store.list_sources() if clean_name(s['name']) in carteira_related_names() and s.get('last_run')]
         result['meta']['data_version']=max(related) if related else result['meta'].get('updated_at')
@@ -64,11 +64,11 @@ def _one_page_table(matrix,width,max_height):
     return table
 
 @router.get('/api/carteira/pdf')
-def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
+def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
     from reportlab.lib.pagesizes import A2,landscape
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas
-    result=build(filters_dict(empresa,classe,rota,status)); buffer=BytesIO(); page=landscape(A2); pdf_canvas=canvas.Canvas(buffer,pagesize=page,pageCompression=1); width,height=page
+    result=build(filters_dict(empresa,rota,status)); buffer=BytesIO(); page=landscape(A2); pdf_canvas=canvas.Canvas(buffer,pagesize=page,pageCompression=1); width,height=page
     green=colors.HexColor('#075638'); amber=colors.HexColor('#F0B323'); muted=colors.HexColor('#60736A'); fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     pdf_canvas.setFillColor(green);pdf_canvas.rect(0,height-72,width,72,fill=1,stroke=0);pdf_canvas.setFillColor(amber);pdf_canvas.roundRect(28,height-58,38,38,8,fill=1,stroke=0);pdf_canvas.setFillColor(green);pdf_canvas.setFont('Helvetica-Bold',25);pdf_canvas.drawCentredString(47,height-50,'L')
     pdf_canvas.setFillColor(colors.white);pdf_canvas.setFont('Helvetica-Bold',18);pdf_canvas.drawString(82,height-37,'Acompanhamento Carteira Geral');pdf_canvas.setFont('Helvetica',7);pdf_canvas.drawString(82,height-52,'VISÃO EXECUTIVA · OPERAÇÃO LOGÍSTICA');pdf_canvas.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))
@@ -77,7 +77,7 @@ def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),rota:list[str]=Qu
     for index,(label,value) in enumerate(cards):
         x=28+index*(card_w+5);pdf_canvas.setFillColor(colors.HexColor('#F3F8F5'));pdf_canvas.roundRect(x,card_y,card_w,35,6,fill=1,stroke=0);pdf_canvas.setFillColor(muted);pdf_canvas.setFont('Helvetica-Bold',5.8);pdf_canvas.drawString(x+10,card_y+23,label);pdf_canvas.setFillColor(green);pdf_canvas.setFont('Helvetica-Bold',12);pdf_canvas.drawString(x+10,card_y+8,value)
     selected=[]
-    for label,values in [('Filial',empresa),('Classe',classe),('Rota',rota),('Status',status)]:selected.append(f"{label}: {', '.join(values) if values else 'Todos'}")
+    for label,values in [('Filial',empresa),('Rota',rota),('Status',status)]:selected.append(f"{label}: {', '.join(values) if values else 'Todos'}")
     pdf_canvas.setFillColor(muted);pdf_canvas.setFont('Helvetica',6);pdf_canvas.drawString(28,card_y-13,'  •  '.join(selected))
     margin=28;gap=16;panel_width=(width-(margin*2)-gap)/2;title_y=card_y-39;table_top=title_y-14;table_bottom=34;max_height=table_top-table_bottom
     for x,title,matrix in ((margin,'CARTEIRA POR FAIXA · DS × ONDA · CLASSE FIXA ZCHP',result['matrix_aging']),(margin+panel_width+gap,'CARTEIRA POR CLASSE · CLASSE × ONDA',result['matrix_class'])):

@@ -11,8 +11,8 @@ from app.services.scheduler_service import next_run_for
 from app.screens.carteira import _one_page_table
 
 router=APIRouter()
-FILTER_LABELS=(('empresa','Filial'),('classe','Classe'),('rota','Rota'),('status','Status da separação'))
-def filters_dict(empresa,classe,rota,status):return {'empresa':empresa,'classe':classe,'rota':rota,'status':status}
+FILTER_LABELS=(('empresa','Filial'),('rota','Rota'),('status','Status da separação'))
+def filters_dict(empresa,rota,status):return {'empresa':empresa,'classe':[],'rota':rota,'status':status}
 
 @router.get('/reab',response_class=HTMLResponse)
 def page():
@@ -21,9 +21,9 @@ def page():
     return layout('Acompanhamento Reab','/reab',content)
 
 @router.get('/api/reab/data')
-def data(empresa:list[str]=Query([]),classe:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
+def data(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
     try:
-        result=build(filters_dict(empresa,classe,rota,status));sources=[s for s in store.list_sources() if clean_name(s['name']) in related_source_names()]
+        result=build(filters_dict(empresa,rota,status));sources=[s for s in store.list_sources() if clean_name(s['name']) in related_source_names()]
         carteira=next((s for s in sources if clean_name(s['name'])=='CARTEIRA'),None);result['meta']['next_run']=next_run_for(carteira['id']) if carteira else None
         result['meta']['revision']=data_revision();return {'ok':True,'data':result}
     except Exception as exc:store.logger.exception('REAB_BUILD_FAILED | erro=%s',exc);return {'ok':False,'message':str(exc)}
@@ -44,11 +44,11 @@ def refresh(background_tasks:BackgroundTasks):
     return {'ok':True,'message':'Atualização da Reab iniciada.'}
 
 @router.get('/api/reab/pdf')
-def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
+def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
     from reportlab.lib.pagesizes import A2,landscape
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas
-    result=build(filters_dict(empresa,classe,rota,status));buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
+    result=build(filters_dict(empresa,rota,status));buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
     green=colors.HexColor('#075638');amber=colors.HexColor('#F0B323');muted=colors.HexColor('#60736A');fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     c.setFillColor(green);c.rect(0,height-72,width,72,fill=1,stroke=0);c.setFillColor(amber);c.roundRect(28,height-58,38,38,8,fill=1,stroke=0);c.setFillColor(green);c.setFont('Helvetica-Bold',25);c.drawCentredString(47,height-50,'L')
     c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Acompanhamento Reab');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · REABASTECIMENTO POR LOJA');c.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))

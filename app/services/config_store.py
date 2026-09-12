@@ -26,12 +26,7 @@ if not logger.handlers:
     logger.addHandler(file_handler)
 
 DEFAULT_SETTINGS = {"max_jobs": 2, "page_size": 100, "cache_seconds": 300, "query_timeout": 30}
-DEFAULT_SOURCES = [
-    ("Carteira", r"C:\Bases\Carteira", "A cada 30 minutos", 1),
-    ("Recebimento", r"C:\Bases\Recebimento", "A cada 1 hora", 1),
-    ("Expedição", r"C:\Bases\Expedicao", "A cada 30 minutos", 0),
-    ("Inventário", r"C:\Bases\Inventario", "Diariamente às 06:00", 0),
-]
+DEFAULT_SOURCES = []
 
 def connect():
     con = sqlite3.connect(DB_PATH, timeout=15)
