@@ -43,7 +43,12 @@ def source_row(item):
     status=item.get('status') or 'IDLE'; status_label={'SUCCESS':'Atualizado','RUNNING':'Atualizando…','ERROR':'Falha','IDLE':'Nunca executado'}.get(status,status)
     def dt(value):
         if not value:return '—'
-        try:return __import__('datetime').datetime.fromisoformat(value).strftime('%d/%m/%Y %H:%M')
+        try:
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+            parsed=datetime.fromisoformat(value)
+            if parsed.tzinfo is None:parsed=parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M')
         except Exception:return str(value)
     last=dt(item.get('last_run')); nxt=dt(next_run_for(item['id'])) if item['enabled'] else 'Desativada'
     return f'''<div class="setting-row source-row" data-source-id="{item['id']}" data-name="{name}" data-path="{path}" data-schedule="{schedule}"><div class="source-icon">▦</div><div class="source-info"><b>{name}</b><span>{path}</span><div class="source-timing"><span>Última: <strong>{esc(last)}</strong></span><span>Próxima: <strong>{esc(nxt)}</strong></span></div><em class="source-status {status.lower()}">{status_label}</em></div><small>{esc(schedule_label)}</small><button class="refresh-source" title="Forçar atualização agora">↻</button><label class="switch"><input class="source-toggle" type="checkbox" {checked}><i></i></label><button class="dots source-menu" title="Editar fonte">•••</button></div>'''

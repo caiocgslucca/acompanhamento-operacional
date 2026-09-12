@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from app.services import config_store as store
 from app.services.job_manager import run_source
+from app.services.scheduler_service import reset_source_job
 
 router=APIRouter()
 ALLOWED={
@@ -102,6 +103,7 @@ def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|No
             else:store.delete_source(source_id)
             shutil.rmtree(version,ignore_errors=True)
             raise HTTPException(422,f"A carga foi recebida, mas não foi publicada: {status.get('status_message') or 'erro de validação'}")
+        reset_source_job(source_id)
         versions=sorted((p for p in root.glob('version-*') if p.is_dir()),key=lambda p:p.stat().st_mtime,reverse=True)
         for old in versions[3:]:shutil.rmtree(old,ignore_errors=True)
         store.logger.info('SYNC_UPLOAD_COMPLETED | fonte=%s | arquivos=%s | bytes=%s | sha256=%s',name,len(members),size,digest.hexdigest())

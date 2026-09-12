@@ -34,6 +34,20 @@ def refresh_jobs():
     store.logger.info('SCHEDULER_REFRESHED | jobs_ativos=%s',count)
     return count
 
+def reset_source_job(source_id):
+    """Recalcula somente a próxima execução da fonte que acabou de atualizar."""
+    if not scheduler.running:scheduler.start()
+    job_id=f"source_{source_id}"
+    if scheduler.get_job(job_id):scheduler.remove_job(job_id)
+    source=store.get_source(source_id)
+    if not source or not source['enabled']:return None
+    trigger=trigger_for(source['schedule'])
+    if not trigger:return None
+    scheduler.add_job(run_source,trigger,args=[source_id],id=job_id,max_instances=1,coalesce=True,misfire_grace_time=300,replace_existing=True)
+    job=scheduler.get_job(job_id)
+    store.logger.info('SOURCE_NEXT_RUN_RECALCULATED | id=%s | next=%s',source_id,job.next_run_time.isoformat() if job and job.next_run_time else None)
+    return job.next_run_time.isoformat() if job and job.next_run_time else None
+
 def next_run_for(source_id):
     job=scheduler.get_job(f"source_{source_id}") if scheduler.running else None
     return job.next_run_time.isoformat() if job and job.next_run_time else None

@@ -49,6 +49,16 @@ def initialize():
         for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL"),("origin_path","TEXT","''"),("sync_revision","INTEGER","0")):
             if name not in columns: con.execute(f"ALTER TABLE sources ADD COLUMN {name} {sql_type} DEFAULT {default}")
         con.execute("UPDATE sources SET origin_path=path WHERE COALESCE(origin_path,'')='' AND path NOT LIKE '%cloud_sources%'")
+        # Versões anteriores gravavam o horário UTC sem o identificador de fuso.
+        # Acrescentar +00:00 permite que navegador e relatórios convertam corretamente.
+        legacy_times=con.execute("SELECT id,last_run FROM sources WHERE last_run IS NOT NULL AND last_run<>''").fetchall()
+        for row in legacy_times:
+            try:
+                from datetime import datetime, timezone
+                parsed=datetime.fromisoformat(row['last_run'])
+                if parsed.tzinfo is None:
+                    con.execute("UPDATE sources SET last_run=? WHERE id=?",(parsed.replace(tzinfo=timezone.utc).isoformat(timespec='seconds'),row['id']))
+            except (TypeError,ValueError):pass
         con.execute("INSERT OR IGNORE INTO settings(id,payload) VALUES(1,?)", (json.dumps(DEFAULT_SETTINGS),))
         if con.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 0:
             con.executemany("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,?)", DEFAULT_SOURCES)
@@ -75,9 +85,9 @@ def get_source(source_id):
         return dict(row) if row else None
 
 def set_source_status(source_id,status,message):
-    from datetime import datetime
+    from datetime import datetime, timezone
     with _lock, connect() as con:
-        con.execute("UPDATE sources SET status=?,status_message=?,last_run=? WHERE id=?",(status,message,datetime.now().isoformat(timespec='seconds'),source_id))
+        con.execute("UPDATE sources SET status=?,status_message=?,last_run=? WHERE id=?",(status,message,datetime.now(timezone.utc).isoformat(timespec='seconds'),source_id))
 
 def get_settings():
     with connect() as con: return json.loads(con.execute("SELECT payload FROM settings WHERE id=1").fetchone()[0])
