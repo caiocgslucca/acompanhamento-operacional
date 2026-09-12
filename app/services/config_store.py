@@ -89,6 +89,13 @@ def set_source_status(source_id,status,message):
     with _lock, connect() as con:
         con.execute("UPDATE sources SET status=?,status_message=?,last_run=? WHERE id=?",(status,message,datetime.now(timezone.utc).isoformat(timespec='seconds'),source_id))
 
+def touch_source_check(source_id):
+    """Registra o instante em que o agente terminou a verificação da fonte."""
+    from datetime import datetime, timezone
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE sources SET last_run=?,status='SUCCESS' WHERE id=?",(datetime.now(timezone.utc).isoformat(timespec='seconds'),source_id))
+        if not cur.rowcount:raise KeyError(source_id)
+
 def get_settings():
     with connect() as con: return json.loads(con.execute("SELECT payload FROM settings WHERE id=1").fetchone()[0])
 

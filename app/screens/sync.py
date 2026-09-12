@@ -68,6 +68,13 @@ def sync_picker_result(payload:PickerResult,x_sync_key:str|None=Header(None)):
     except KeyError:raise HTTPException(404,'Solicitação do seletor não encontrada.')
     return {'ok':True}
 
+@router.post('/api/sync/source-check/{source_id}')
+def sync_source_check(source_id:int,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    try:store.touch_source_check(source_id)
+    except KeyError:raise HTTPException(404,'Fonte não encontrada.')
+    return {'ok':True,'source_id':source_id}
+
 @router.post('/api/sync/source/{source_key}')
 def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|None=Header(None),x_content_sha256:str|None=Header(None)):
     _authorize(x_sync_key);source_id=None;name=ALLOWED.get(source_key.lower())

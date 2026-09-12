@@ -40,6 +40,9 @@ def carteira_status():
 def refresh(background_tasks:BackgroundTasks):
     sources=[s for s in store.list_sources() if clean_name(s['name']) in carteira_related_names()]
     if not {'CARTEIRA','ONDA'}.issubset({clean_name(s['name']) for s in sources}):return {'ok':False,'message':'Cadastre e ative as fontes “Carteira” e “Onda” em Configurações.'}
+    if __import__('os').name!='nt':
+        for source in sources:store.request_source_sync(source['id'])
+        return {'ok':True,'message':'Atualização solicitada ao sincronizador local.'}
     for source in sources:
         store.set_source_status(source['id'],'RUNNING','Atualização solicitada · aguardando processamento')
         background_tasks.add_task(run_source,source['id'])

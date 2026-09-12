@@ -37,6 +37,9 @@ def status():
 def refresh(background_tasks:BackgroundTasks):
     sources=[s for s in store.list_sources() if clean_name(s['name']) in related_source_names()]
     if not any(clean_name(s['name'])=='CARTEIRA' for s in sources):return {'ok':False,'message':'Cadastre a fonte “Carteira” em Configurações.'}
+    if __import__('os').name!='nt':
+        for source in sources:store.request_source_sync(source['id'])
+        return {'ok':True,'message':'Atualização solicitada ao sincronizador local.'}
     for source in sources:store.set_source_status(source['id'],'RUNNING','Atualização solicitada · aguardando processamento');background_tasks.add_task(run_source,source['id'])
     return {'ok':True,'message':'Atualização da Reab iniciada.'}
 

@@ -145,7 +145,7 @@ def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None
     remote=f'source-{source_id}' if source_id else REMOTE_KEYS.get(clean(name))
     if not remote:return previous
     base=Path(path_text);files=source_files(path_text)
-    if not files:log.warning('FONTE_IGNORADA | fonte=%s | caminho não encontrado ou vazio=%s',name,path_text);return previous
+    if not files:raise ValueError(f'Caminho não encontrado, vazio ou sem arquivos compatíveis: {path_text}')
     current=fingerprint(files,base);state_key=f'{current}:{revision}'
     if previous.get(remote)==state_key:log.info('SEM_ALTERACAO | fonte=%s | arquivos=%s',name,len(files));return previous
     archive=make_archive(files,base)
@@ -182,6 +182,8 @@ def run_once(config,log):
                 log.info('FONTE_AGUARDANDO_JANELA | fonte=%s | agendamento=%s',name,source.get('schedule'));continue
             try:
                 state=send(client,server,key,name,source['path'],state,log,source.get('revision',0),source.get('source_id'))
+                if source.get('source_id'):
+                    checked=client.post(f"{server}/api/sync/source-check/{source['source_id']}",headers={'X-Sync-Key':key});checked.raise_for_status()
                 mark_schedule_checked(state,remote,source.get('revision',0));save_state(state)
             except Exception as exc:
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
@@ -199,7 +201,8 @@ def main():
             log.exception('CICLO_FALHOU | erro=%s',exc)
             if once:raise
         if once:return
-        log.info('PROXIMA_CONSULTA_DE_AGENDAMENTOS | minutos=%s',interval);time.sleep(interval*60)
+        poll_seconds=min(interval*60,30)
+        log.info('PROXIMA_CONSULTA_DE_AGENDAMENTOS | segundos=%s',poll_seconds);time.sleep(poll_seconds)
 
 if __name__=='__main__':
     try:main()

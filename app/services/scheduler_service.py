@@ -1,4 +1,7 @@
 import json
+import os
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
@@ -22,6 +25,10 @@ def trigger_for(raw):
     return None
 
 def refresh_jobs():
+    if os.name!='nt':
+        if scheduler.running:scheduler.remove_all_jobs()
+        store.logger.info('SCHEDULER_REMOTE_MODE | agendamentos controlados pelo sincronizador local')
+        return 0
     if not scheduler.running: scheduler.start()
     scheduler.remove_all_jobs()
     count=0
@@ -36,6 +43,7 @@ def refresh_jobs():
 
 def reset_source_job(source_id):
     """Recalcula somente a próxima execução da fonte que acabou de atualizar."""
+    if os.name!='nt':return next_run_for(source_id)
     if not scheduler.running:scheduler.start()
     job_id=f"source_{source_id}"
     if scheduler.get_job(job_id):scheduler.remove_job(job_id)
@@ -49,5 +57,25 @@ def reset_source_job(source_id):
     return job.next_run_time.isoformat() if job and job.next_run_time else None
 
 def next_run_for(source_id):
-    job=scheduler.get_job(f"source_{source_id}") if scheduler.running else None
-    return job.next_run_time.isoformat() if job and job.next_run_time else None
+    source=store.get_source(source_id)
+    if not source or not source.get('enabled') or not source.get('last_run'):return None
+    try:cfg=json.loads(source.get('schedule') or '{}')
+    except (TypeError,json.JSONDecodeError):return None
+    try:
+        last=datetime.fromisoformat(source['last_run'])
+        if last.tzinfo is None:last=last.replace(tzinfo=timezone.utc)
+    except (TypeError,ValueError):return None
+    kind=cfg.get('type');local_zone=ZoneInfo('America/Sao_Paulo');local_last=last.astimezone(local_zone)
+    if kind=='interval':
+        value=max(1,int(cfg.get('value',1)));delta=timedelta(minutes=value) if str(cfg.get('unit','')).startswith('minuto') else timedelta(hours=value)
+        return (last+delta).isoformat(timespec='seconds')
+    if kind not in ('daily','weekly'):return None
+    try:hour,minute=map(int,str(cfg.get('time','06:00')).split(':'))
+    except ValueError:hour,minute=6,0
+    candidate=local_last.replace(hour=hour,minute=minute,second=0,microsecond=0)
+    if candidate<=local_last:candidate+=timedelta(days=1)
+    if kind=='weekly':
+        day_map={'seg':0,'ter':1,'qua':2,'qui':3,'sex':4,'sab':5,'dom':6};allowed={day_map[d] for d in str(cfg.get('days','')).split(',') if d in day_map}
+        if not allowed:return None
+        while candidate.weekday() not in allowed:candidate+=timedelta(days=1)
+    return candidate.astimezone(timezone.utc).isoformat(timespec='seconds')
