@@ -25,10 +25,11 @@ def picker_token(key):return hashlib.sha256((key+'|operacional-local-picker').en
 
 def native_select(mode):
     if os.name!='nt':return ''
+    owner="$o=New-Object System.Windows.Forms.Form;$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.StartPosition='Manual';$o.Location=New-Object System.Drawing.Point -ArgumentList (-32000),(-32000);$o.Size=New-Object System.Drawing.Size -ArgumentList 1,1;$o.Show();$o.Activate();"
     if mode=='folder':
-        script="Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar pasta de dados';$d.ShowNewFolderButton=$false;if($d.ShowDialog() -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath}"
+        script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar pasta de dados';$d.ShowNewFolderButton=$false;if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$d.Dispose();$o.Close();$o.Dispose()"
     else:
-        script="Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.OpenFileDialog;$d.Title='Selecionar arquivo de dados';$d.Filter='Planilhas (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|Todos os arquivos (*.*)|*.*';if($d.ShowDialog() -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.FileName}"
+        script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.OpenFileDialog;$d.Title='Selecionar arquivo de dados';$d.Filter='Planilhas (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|Todos os arquivos (*.*)|*.*';if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.FileName};$d.Dispose();$o.Close();$o.Dispose()"
     result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-STA','-Command',script],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
     return result.stdout.strip().splitlines()[-1].strip() if result.returncode==0 and result.stdout.strip() else ''
 
@@ -44,7 +45,7 @@ def start_picker_server(key,log):
             try:selected=native_select(mode)
             except Exception as exc:log.exception('LOCAL_PICKER_FAILED | erro=%s',exc);selected=''
             value=json.dumps(selected,ensure_ascii=False).replace('</','<\\/')
-            body=f'''<!doctype html><meta charset="utf-8"><title>Selecionar origem</title><style>body{{font:16px Segoe UI;background:#f3f7f5;color:#10251a;padding:28px}}b{{color:#087b48}}</style><b>LEO Madeiras</b><p>Seleção processada. Esta janela será fechada automaticamente.</p><script>if(window.opener)window.opener.postMessage({{type:'operacional-path',path:{value}}},'*');window.close()</script>'''.encode('utf-8')
+            body=f'''<!doctype html><meta charset="utf-8"><script>const target=window.opener||window.parent;if(target)target.postMessage({{type:'operacional-path',path:{value}}},'*');if(window.opener)window.close()</script>'''.encode('utf-8')
             self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
     try:
         server=ThreadingHTTPServer(('127.0.0.1',8765),Handler)
