@@ -153,16 +153,21 @@ def report_schedule_due(report,state):
     remote=f"report::{report['module']}"
     try:cfg=json.loads(report.get('schedule') or '{}')
     except (TypeError,json.JSONDecodeError):cfg={}
+    revision=int(report.get('revision') or 0)
     meta=(state.get('_report_schedule_meta') or {}).get(remote)
-    last_text=(meta or {}).get('checked_at') or report.get('last_run')
+    if meta and int(meta.get('revision',-1))!=revision:meta=None
+    candidates=[value for value in ((meta or {}).get('checked_at'),report.get('last_run'),report.get('updated_at')) if value]
     now=datetime.now().astimezone()
-    if not last_text:
-        state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':now.isoformat(timespec='seconds')}
+    if not candidates:
+        state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':now.isoformat(timespec='seconds'),'revision':revision}
         save_state(state);return False,remote
     try:
-        last=datetime.fromisoformat(str(last_text).replace('Z','+00:00'))
-        if last.tzinfo is None:last=last.replace(tzinfo=now.tzinfo)
-        last=last.astimezone(now.tzinfo)
+        parsed=[]
+        for value in candidates:
+            item=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+            if item.tzinfo is None:item=item.replace(tzinfo=now.tzinfo)
+            parsed.append(item.astimezone(now.tzinfo))
+        last=max(parsed)
     except (TypeError,ValueError):last=now
     kind=cfg.get('type','interval')
     if kind=='interval':
@@ -177,8 +182,8 @@ def report_schedule_due(report,state):
         return now.weekday() in allowed and now>=scheduled and last<scheduled,remote
     return False,remote
 
-def mark_report_checked(state,remote):
-    state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':datetime.now().astimezone().isoformat(timespec='seconds')}
+def mark_report_checked(state,remote,revision=0):
+    state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':datetime.now().astimezone().isoformat(timespec='seconds'),'revision':int(revision or 0)}
 
 def optional_sync_event(client,url,headers,log,event,json_body=None):
     """Eventos de estado não podem impedir o envio durante uma troca de versão."""
@@ -230,13 +235,13 @@ def export_report(client,server,key,report,state,log):
                 for chunk in response.iter_bytes(1024*1024):output.write(chunk)
         if temporary.stat().st_size<4 or temporary.read_bytes()[:4]!=b'%PDF':raise ValueError('O servidor não retornou um PDF válido.')
         os.replace(temporary,target)
-        mark_report_checked(state,remote);save_state(state)
+        mark_report_checked(state,remote,report.get('revision'));save_state(state)
         message=f'PDF substituído com sucesso: {target}'
         client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'SUCCESS','message':message}).raise_for_status()
         log.info('PDF_GERACAO_CONCLUIDA | modulo=%s | arquivo=%s | tamanho_kb=%.1f',module,target,target.stat().st_size/1024)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
-        mark_report_checked(state,remote);save_state(state)
+        mark_report_checked(state,remote,report.get('revision'));save_state(state)
         try:client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'ERROR','message':str(exc)[:500]}).raise_for_status()
         except Exception:pass
         log.exception('PDF_GERACAO_FALHOU | modulo=%s | erro=%s',module,exc)

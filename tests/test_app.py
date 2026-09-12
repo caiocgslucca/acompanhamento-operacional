@@ -81,8 +81,8 @@ def test_pdf_schedule_treats_minuto_case_insensitively():
     from datetime import datetime,timedelta
     from sync_agent import report_schedule_due
     checked=(datetime.now().astimezone()-timedelta(minutes=7)).isoformat(timespec='seconds')
-    state={'_report_schedule_meta':{'report::carteira':{'checked_at':checked}}}
-    report={'module':'carteira','schedule':'{"type":"interval","value":6,"unit":"Minuto(s)"}','last_run':None}
+    state={'_report_schedule_meta':{'report::carteira':{'checked_at':checked,'revision':0}}}
+    report={'module':'carteira','schedule':'{"type":"interval","value":6,"unit":"Minuto(s)"}','last_run':None,'revision':0}
     due,key=report_schedule_due(report,state)
     assert due is True and key=='report::carteira'
 
