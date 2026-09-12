@@ -1,4 +1,6 @@
+import hashlib
 import json
+import os
 import sqlite3
 from html import escape
 from pathlib import Path
@@ -58,6 +60,13 @@ def page():
 @router.post('/api/configuracoes/settings')
 def save_settings(payload: SettingsPayload):
     return {'ok':True,'data':store.save_settings(payload.model_dump()),'message':'Configurações salvas.'}
+
+@router.get('/api/configuracoes/picker-token')
+def picker_token():
+    key=os.getenv('SYNC_API_KEY','').strip()
+    if len(key)<24:raise HTTPException(503,'A chave do sincronizador não está configurada no Railway.')
+    token=hashlib.sha256((key+'|operacional-local-picker').encode()).hexdigest()
+    return {'ok':True,'token':token,'url':'http://127.0.0.1:8765'}
 
 @router.post('/api/configuracoes/sources')
 def add_source(payload: SourcePayload):

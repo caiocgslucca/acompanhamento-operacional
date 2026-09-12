@@ -1,20 +1,55 @@
 import hashlib
+import hmac
 import json
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import zipfile
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs,urlparse
 import httpx
 
 ROOT=Path(__file__).resolve().parent
 CONFIG=ROOT/'sync_config.json';STATE=ROOT/'data'/'sync_state.json';LOG=ROOT/'logs'/'sincronizador.log'
 SUPPORTED={'.xlsx','.xlsm','.csv'}
 REMOTE_KEYS={'CARTEIRA':'carteira','ONDA':'onda','LOJAS':'lojas','LOJA':'lojas','REAB':'reab','A EXTRAIR':'a-extrair','A_EXTRAIR':'a-extrair','AGUARDANDO LIBERACAO':'a-extrair'}
+
+def picker_token(key):return hashlib.sha256((key+'|operacional-local-picker').encode()).hexdigest()
+
+def native_select(mode):
+    if os.name!='nt':return ''
+    if mode=='folder':
+        script="Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar pasta de dados';$d.ShowNewFolderButton=$false;if($d.ShowDialog() -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath}"
+    else:
+        script="Add-Type -AssemblyName System.Windows.Forms;$d=New-Object System.Windows.Forms.OpenFileDialog;$d.Title='Selecionar arquivo de dados';$d.Filter='Planilhas (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|Todos os arquivos (*.*)|*.*';if($d.ShowDialog() -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.FileName}"
+    result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-STA','-Command',script],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
+    return result.stdout.strip().splitlines()[-1].strip() if result.returncode==0 and result.stdout.strip() else ''
+
+def start_picker_server(key,log):
+    expected=picker_token(key)
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*_):pass
+        def do_GET(self):
+            parsed=urlparse(self.path);params=parse_qs(parsed.query)
+            supplied=(params.get('token') or [''])[0];mode=(params.get('mode') or ['folder'])[0]
+            if parsed.path!='/pick' or mode not in {'folder','file'} or not hmac.compare_digest(supplied,expected):
+                self.send_response(403);self.end_headers();return
+            try:selected=native_select(mode)
+            except Exception as exc:log.exception('LOCAL_PICKER_FAILED | erro=%s',exc);selected=''
+            value=json.dumps(selected,ensure_ascii=False).replace('</','<\\/')
+            body=f'''<!doctype html><meta charset="utf-8"><title>Selecionar origem</title><style>body{{font:16px Segoe UI;background:#f3f7f5;color:#10251a;padding:28px}}b{{color:#087b48}}</style><b>LEO Madeiras</b><p>Seleção processada. Esta janela será fechada automaticamente.</p><script>if(window.opener)window.opener.postMessage({{type:'operacional-path',path:{value}}},'*');window.close()</script>'''.encode('utf-8')
+            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+    try:
+        server=ThreadingHTTPServer(('127.0.0.1',8765),Handler)
+    except OSError as exc:log.warning('LOCAL_PICKER_UNAVAILABLE | porta=8765 | erro=%s',exc);return
+    threading.Thread(target=server.serve_forever,name='operacional-picker',daemon=True).start();log.info('LOCAL_PICKER_READY | endereco=127.0.0.1:8765')
 
 def process_lock():
     path=ROOT/'data'/'sync_agent.lock';path.parent.mkdir(parents=True,exist_ok=True);handle=path.open('a+b')
@@ -119,6 +154,7 @@ def main():
     lock=process_lock();log=logger();config=load_json(CONFIG,{})
     if not config:raise FileNotFoundError('Execute primeiro CONFIGURAR_SINCRONIZADOR.bat.')
     interval=max(1,int(config.get('interval_minutes',5)));once='--once' in sys.argv
+    if not once:start_picker_server(str(config.get('api_key','')),log)
     log.info('SINCRONIZADOR_INICIADO | intervalo_minutos=%s | modo=%s',interval,'único' if once else 'contínuo')
     while True:
         try:run_once(config,log)

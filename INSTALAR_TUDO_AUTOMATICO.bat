@@ -12,6 +12,7 @@ set "VENV_PY=.venv\Scripts\python.exe"
 
 echo [1/8] Verificando Windows e PowerShell...
 where powershell.exe >nul 2>&1 || goto :sem_powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$root=[regex]::Escape((Get-Location).Path); Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match $root -and $_.CommandLine -match 'sync_agent\.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
 echo [2/8] Localizando uma instalacao valida do Python...
 if exist "%VENV_PY%" (
