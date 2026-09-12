@@ -10,6 +10,7 @@ import threading
 import time
 import unicodedata
 import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
 import httpx
 
@@ -93,7 +94,7 @@ def configured_sources(config,client,server,key,log):
         response=client.get(f'{server}/api/sync/config',headers={'X-Sync-Key':key});response.raise_for_status()
         remote=response.json().get('sources') or []
         if remote:
-            return {item['name']:{'path':item['path'],'revision':item.get('revision',0),'source_id':item.get('id')} for item in remote}
+            return {item['name']:{'path':item['path'],'revision':item.get('revision',0),'source_id':item.get('id'),'schedule':item.get('schedule')} for item in remote}
     except Exception as exc:
         log.warning('CONFIG_REMOTA_INDISPONIVEL | usando configuração local | erro=%s',exc)
     explicit=config.get('sources') or database_sources()
@@ -113,6 +114,33 @@ def make_archive(files,base):
         for path in files:book.write(path,path.name if base.is_file() else path.relative_to(base).as_posix())
     return archive
 
+def schedule_due(source,state):
+    remote=f"source-{source.get('source_id')}" if source.get('source_id') else clean(source.get('path'))
+    meta=(state.get('_schedule_meta') or {}).get(remote)
+    revision=int(source.get('revision') or 0)
+    if not meta or int(meta.get('revision',-1))!=revision:return True,remote
+    try:cfg=json.loads(source.get('schedule') or '{}')
+    except (TypeError,json.JSONDecodeError):cfg={}
+    kind=cfg.get('type','manual');now=datetime.now()
+    try:last=datetime.fromisoformat(meta['checked_at'])
+    except (KeyError,TypeError,ValueError):return True,remote
+    if kind=='manual':return False,remote
+    if kind=='interval':
+        value=max(1,int(cfg.get('value',1)));unit=str(cfg.get('unit','minuto(s)'))
+        return now>=last+(timedelta(minutes=value) if unit.startswith('minuto') else timedelta(hours=value)),remote
+    try:hour,minute=map(int,str(cfg.get('time','06:00')).split(':'))
+    except ValueError:hour,minute=6,0
+    scheduled=now.replace(hour=hour,minute=minute,second=0,microsecond=0)
+    if kind=='daily':return now>=scheduled and last<scheduled,remote
+    if kind=='weekly':
+        days={'seg':0,'ter':1,'qua':2,'qui':3,'sex':4,'sab':5,'dom':6}
+        allowed={days[d] for d in str(cfg.get('days','')).split(',') if d in days}
+        return now.weekday() in allowed and now>=scheduled and last<scheduled,remote
+    return False,remote
+
+def mark_schedule_checked(state,remote,revision):
+    state.setdefault('_schedule_meta',{})[remote]={'checked_at':datetime.now().isoformat(timespec='seconds'),'revision':int(revision or 0)}
+
 def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None):
     remote=f'source-{source_id}' if source_id else REMOTE_KEYS.get(clean(name))
     if not remote:return previous
@@ -125,7 +153,11 @@ def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None
         package_hash=hashlib.sha256(archive.read_bytes()).hexdigest();log.info('ENVIO_INICIADO | fonte=%s | arquivos=%s | tamanho_mb=%.1f',name,len(files),archive.stat().st_size/1048576)
         with archive.open('rb') as payload:
             response=client.post(f'{server}/api/sync/source/{remote}',headers={'X-Sync-Key':key,'X-Content-SHA256':package_hash},files={'archive':('fonte.zip',payload,'application/zip')})
-        response.raise_for_status();body=response.json()
+        if response.is_error:
+            try:detail=response.json().get('detail') or response.text
+            except Exception:detail=response.text
+            raise RuntimeError(f'Railway rejeitou a carga ({response.status_code}): {detail}')
+        body=response.json()
         if not body.get('ok'):raise RuntimeError(body.get('message') or 'Servidor recusou a publicação.')
         previous[remote]=state_key;log.info('ENVIO_CONCLUIDO | fonte=%s | arquivos=%s | %s',name,body.get('files'),body.get('message','publicado'))
         return previous
@@ -145,7 +177,12 @@ def run_once(config,log):
         sources=configured_sources(config,client,server,key,log)
         if not sources:raise ValueError('Nenhuma fonte ativa foi cadastrada na tela Configurações do sistema.')
         for name,source in sources.items():
-            try:state=send(client,server,key,name,source['path'],state,log,source.get('revision',0),source.get('source_id'));save_state(state)
+            due,remote=schedule_due(source,state)
+            if not due:
+                log.info('FONTE_AGUARDANDO_JANELA | fonte=%s | agendamento=%s',name,source.get('schedule'));continue
+            try:
+                state=send(client,server,key,name,source['path'],state,log,source.get('revision',0),source.get('source_id'))
+                mark_schedule_checked(state,remote,source.get('revision',0));save_state(state)
             except Exception as exc:
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
     if failures:raise RuntimeError('Falha em uma ou mais fontes: '+'; '.join(failures))
@@ -155,14 +192,14 @@ def main():
     if not config:raise FileNotFoundError('Execute primeiro CONFIGURAR_SINCRONIZADOR.bat.')
     interval=max(1,int(config.get('interval_minutes',5)));once='--once' in sys.argv
     if not once:threading.Thread(target=remote_picker_worker,args=(config,log),name='operacional-picker',daemon=True).start()
-    log.info('SINCRONIZADOR_INICIADO | intervalo_minutos=%s | modo=%s',interval,'único' if once else 'contínuo')
+    log.info('SINCRONIZADOR_INICIADO | consulta_agendamentos_minutos=%s | modo=%s',interval,'único' if once else 'contínuo')
     while True:
         try:run_once(config,log)
         except Exception as exc:
             log.exception('CICLO_FALHOU | erro=%s',exc)
             if once:raise
         if once:return
-        log.info('PROXIMA_VERIFICACAO | minutos=%s',interval);time.sleep(interval*60)
+        log.info('PROXIMA_CONSULTA_DE_AGENDAMENTOS | minutos=%s',interval);time.sleep(interval*60)
 
 if __name__=='__main__':
     try:main()
