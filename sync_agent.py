@@ -23,7 +23,7 @@ def native_select(mode):
     if os.name!='nt':return ''
     owner="$o=New-Object System.Windows.Forms.Form;$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.StartPosition='CenterScreen';$o.Size=New-Object System.Drawing.Size -ArgumentList 1,1;$o.Opacity=0.01;$o.Show();$o.Activate();$o.BringToFront();"
     if mode=='folder':
-        script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar pasta de dados';$d.ShowNewFolderButton=$false;if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$d.Dispose();$o.Close();$o.Dispose()"
+        script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.FolderBrowserDialog;$d.Description='Selecionar ou criar pasta';$d.ShowNewFolderButton=$true;if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$d.Dispose();$o.Close();$o.Dispose()"
     else:
         script="Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"+owner+"$d=New-Object System.Windows.Forms.OpenFileDialog;$d.Title='Selecionar arquivo de dados';$d.Filter='Planilhas (*.xlsx;*.xlsm;*.csv)|*.xlsx;*.xlsm;*.csv|Todos os arquivos (*.*)|*.*';if($d.ShowDialog($o) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.FileName};$d.Dispose();$o.Close();$o.Dispose()"
     result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-STA','-Command',script],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
@@ -148,6 +148,38 @@ def schedule_due(source,state):
 def mark_schedule_checked(state,remote,revision):
     state.setdefault('_schedule_meta',{})[remote]={'checked_at':datetime.now().isoformat(timespec='seconds'),'revision':int(revision or 0)}
 
+def report_schedule_due(report,state):
+    """Agenda exclusiva dos PDFs. A primeira ativação inicia a contagem sem baixar tudo de uma vez."""
+    remote=f"report::{report['module']}"
+    try:cfg=json.loads(report.get('schedule') or '{}')
+    except (TypeError,json.JSONDecodeError):cfg={}
+    meta=(state.get('_report_schedule_meta') or {}).get(remote)
+    last_text=(meta or {}).get('checked_at') or report.get('last_run')
+    now=datetime.now().astimezone()
+    if not last_text:
+        state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':now.isoformat(timespec='seconds')}
+        save_state(state);return False,remote
+    try:
+        last=datetime.fromisoformat(str(last_text).replace('Z','+00:00'))
+        if last.tzinfo is None:last=last.replace(tzinfo=now.tzinfo)
+        last=last.astimezone(now.tzinfo)
+    except (TypeError,ValueError):last=now
+    kind=cfg.get('type','interval')
+    if kind=='interval':
+        value=max(1,int(cfg.get('value',1)));unit=str(cfg.get('unit','minuto(s)')).strip().lower()
+        return now>=last+(timedelta(minutes=value) if unit.startswith('minuto') else timedelta(hours=value)),remote
+    try:hour,minute=map(int,str(cfg.get('time','06:00')).split(':'))
+    except ValueError:hour,minute=6,0
+    scheduled=now.replace(hour=hour,minute=minute,second=0,microsecond=0)
+    if kind=='daily':return now>=scheduled and last<scheduled,remote
+    if kind=='weekly':
+        days={'seg':0,'ter':1,'qua':2,'qui':3,'sex':4,'sab':5,'dom':6};allowed={days[d] for d in str(cfg.get('days','')).split(',') if d in days}
+        return now.weekday() in allowed and now>=scheduled and last<scheduled,remote
+    return False,remote
+
+def mark_report_checked(state,remote):
+    state.setdefault('_report_schedule_meta',{})[remote]={'checked_at':datetime.now().astimezone().isoformat(timespec='seconds')}
+
 def optional_sync_event(client,url,headers,log,event,json_body=None):
     """Eventos de estado não podem impedir o envio durante uma troca de versão."""
     response=client.post(url,headers=headers,json=json_body)
@@ -181,8 +213,7 @@ def save_state(state):
     STATE.parent.mkdir(parents=True,exist_ok=True);temporary=STATE.with_suffix('.tmp');temporary.write_text(json.dumps(state,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(temporary,STATE)
 
 def export_report(client,server,key,report,state,log):
-    module=report['module'];schedule_source={'path':f'report::{module}','schedule':report.get('schedule'),'revision':0}
-    due,remote=schedule_due(schedule_source,state)
+    module=report['module'];due,remote=report_schedule_due(report,state)
     if not due:
         log.info('PDF_AGUARDANDO_JANELA | modulo=%s | agendamento=%s',module,report.get('schedule'));return state
     destination=Path(report['destination_path']);destination.mkdir(parents=True,exist_ok=True)
@@ -199,12 +230,13 @@ def export_report(client,server,key,report,state,log):
                 for chunk in response.iter_bytes(1024*1024):output.write(chunk)
         if temporary.stat().st_size<4 or temporary.read_bytes()[:4]!=b'%PDF':raise ValueError('O servidor não retornou um PDF válido.')
         os.replace(temporary,target)
-        mark_schedule_checked(state,remote,0);save_state(state)
+        mark_report_checked(state,remote);save_state(state)
         message=f'PDF substituído com sucesso: {target}'
         client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'SUCCESS','message':message}).raise_for_status()
         log.info('PDF_GERACAO_CONCLUIDA | modulo=%s | arquivo=%s | tamanho_kb=%.1f',module,target,target.stat().st_size/1024)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
+        mark_report_checked(state,remote);save_state(state)
         try:client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'ERROR','message':str(exc)[:500]}).raise_for_status()
         except Exception:pass
         log.exception('PDF_GERACAO_FALHOU | modulo=%s | erro=%s',module,exc)
@@ -220,6 +252,11 @@ def run_once(config,log):
         health=client.get(f'{server}/api/sync/health',headers={'X-Sync-Key':key});health.raise_for_status()
         sources=configured_sources(config,client,server,key,log)
         if not sources:raise ValueError('Nenhuma fonte ativa foi cadastrada na tela Configurações do sistema.')
+        # Um único PDF por ciclo. Os demais permanecem na fila para a próxima consulta.
+        for report in configured_reports(client,server,key,log):
+            due,_=report_schedule_due(report,state)
+            if due:
+                state=export_report(client,server,key,report,state,log);break
         for name,source in sources.items():
             due,remote=schedule_due(source,state)
             if not due:
@@ -236,8 +273,6 @@ def run_once(config,log):
                     try:optional_sync_event(client,f"{server}/api/sync/source-error/{source['source_id']}",{'X-Sync-Key':key},log,'erro',{'error':str(exc)[:500]})
                     except Exception:pass
                 failures.append(f'{name}: {exc}');log.exception('ENVIO_FALHOU | fonte=%s | erro=%s',name,exc)
-        for report in configured_reports(client,server,key,log):
-            state=export_report(client,server,key,report,state,log)
     if failures:raise RuntimeError('Falha em uma ou mais fontes: '+'; '.join(failures))
 
 def main():

@@ -77,6 +77,15 @@ def test_report_export_configuration(monkeypatch,tmp_path):
     payload['enabled']=False
     assert client.put('/api/report-config/carteira',json=payload).status_code==200
 
+def test_pdf_schedule_treats_minuto_case_insensitively():
+    from datetime import datetime,timedelta
+    from sync_agent import report_schedule_due
+    checked=(datetime.now().astimezone()-timedelta(minutes=7)).isoformat(timespec='seconds')
+    state={'_report_schedule_meta':{'report::carteira':{'checked_at':checked}}}
+    report={'module':'carteira','schedule':'{"type":"interval","value":6,"unit":"Minuto(s)"}','last_run':None}
+    due,key=report_schedule_due(report,state)
+    assert due is True and key=='report::carteira'
+
 def test_native_path_picker_endpoint(monkeypatch,tmp_path):
     from app.screens import configuracoes
     monkeypatch.setattr(configuracoes,'open_native_dialog',lambda mode: str(tmp_path) if mode=='folder' else None)
