@@ -14,14 +14,14 @@ def _filter(key,label):return f'''<div class="multi-filter" data-filter="{key}">
 
 @router.get('/producao',response_class=HTMLResponse)
 def page():
-    filters=''.join(_filter(key,label) for key,label in (('empresa','Filial'),('classe','Classe'),('data','Data oficial'),('turno_rota','TURNO ROTA CHAR')))
+    filters=''.join(_filter(key,label) for key,label in (('empresa','Filial'),('classe','Classe'),('data','Data oficial'),('turno','Turno'),('turno_rota','Turno Rota')))
     content=f'''<div id="toast" class="toast" role="status"></div><div class="carteira-head"><div><p>Visão consolidada da demanda, separação e saldo de produção por onda.</p><div id="production-meta" class="data-meta">Preparando indicadores…</div><div class="update-timeline"><span id="production-status" class="status-badge idle">Aguardando dados</span><span id="production-updated">Última atualização: —</span><span id="production-next">Próxima atualização: —</span></div></div><div class="carteira-actions"><a id="export-production" class="btn secondary" href="/api/producao/pdf">▧ Gerar relatório PDF</a><button id="refresh-production" class="btn primary">↻ Atualizar produção</button></div></div><div id="production-filters" class="filter-panel production-filters">{filters}<button id="clear-production-filters" class="clear-filter">Limpar filtros</button></div><div id="production-error" class="data-error hidden"></div><div id="production-loading" class="matrix-loading"><i></i><b>Calculando demanda e produção…</b><span>As ondas permanecem fixas durante a atualização.</span></div><section id="production-content" class="production-panel hidden"><div class="production-title"><div><small>DEMANDA E EXECUÇÃO POR ONDA</small><h2>Controle de Demanda e Produção</h2></div><span id="production-progress">0% concluído</span></div><div id="production-table" class="production-scroll"></div></section>'''
     return layout('Controle de Demanda e Produção','/producao',content)
 
 @router.get('/api/producao/data')
-def data(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Query([]),turno_rota:list[str]=Query([])):
+def data(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Query([]),turno:list[str]=Query([]),turno_rota:list[str]=Query([])):
     try:
-        result=build({'empresa':empresa,'classe':classe,'data':data,'turno_rota':turno_rota});source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
+        result=build({'empresa':empresa,'classe':classe,'data':data,'turno':turno,'turno_rota':turno_rota});source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
         result['meta']['next_run']=next_run_for(source['id']) if source else None;result['meta']['revision']=data_revision();return {'ok':True,'data':result}
     except Exception as exc:store.logger.exception('PRODUCAO_BUILD_FAILED | erro=%s',exc);return {'ok':False,'message':str(exc)}
 
@@ -41,12 +41,12 @@ def refresh(background_tasks:BackgroundTasks):
     return {'ok':True,'message':'Atualização da demanda e produção iniciada.'}
 
 @router.get('/api/producao/pdf')
-def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Query([]),turno_rota:list[str]=Query([])):
+def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Query([]),turno:list[str]=Query([]),turno_rota:list[str]=Query([])):
     from reportlab.lib.pagesizes import A2,landscape
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas
     from reportlab.platypus import Table,TableStyle
-    selected={'empresa':empresa,'classe':classe,'data':data,'turno_rota':turno_rota};result=build(selected);buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
+    selected={'empresa':empresa,'classe':classe,'data':data,'turno':turno,'turno_rota':turno_rota};result=build(selected);buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
     green=colors.HexColor('#075638');amber=colors.HexColor('#F0B323');muted=colors.HexColor('#60736A');fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     c.setFillColor(green);c.rect(0,height-72,width,72,fill=1,stroke=0);c.setFillColor(amber);c.roundRect(28,height-58,38,38,8,fill=1,stroke=0);c.setFillColor(green);c.setFont('Helvetica-Bold',25);c.drawCentredString(47,height-50,'L')
     c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Controle de Demanda e Produção');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · EXECUÇÃO POR ONDA');c.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))
@@ -54,7 +54,7 @@ def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Qu
     for index,(label,value) in enumerate(cards):
         x=28+index*(card_w+5);c.setFillColor(colors.HexColor('#F3F8F5'));c.roundRect(x,card_y,card_w,35,6,fill=1,stroke=0);c.setFillColor(muted);c.setFont('Helvetica-Bold',5.8);c.drawString(x+10,card_y+23,label);c.setFillColor(green);c.setFont('Helvetica-Bold',12);c.drawString(x+10,card_y+8,value)
     filter_text=[]
-    for label,key in (('Filial','empresa'),('Classe','classe'),('Data oficial','data'),('Turno Rota','turno_rota')):filter_text.append(f"{label}: {', '.join(selected[key]) if selected[key] else 'Todos'}")
+    for label,key in (('Filial','empresa'),('Classe','classe'),('Data oficial','data'),('Turno','turno'),('Turno Rota','turno_rota')):filter_text.append(f"{label}: {', '.join(selected[key]) if selected[key] else 'Todos'}")
     c.setFillColor(muted);c.setFont('Helvetica',6);c.drawString(28,card_y-13,'  •  '.join(filter_text))
     rows=[['CÓDIGO E DESCRIÇÃO DA ONDA','TOTAL A PRODUZIR','QTD. CANCELADA','QTD. SEPARADA','QTD. PENDENTE','% CONCLUÍDO']]
     rows += [[r['label'],fmt(r['produzir']),fmt(r['cancelado']),fmt(r['separado']),fmt(r['pendente']),f"{r['concluido']:.1f}%".replace('.',',')] for r in result['rows']]

@@ -41,7 +41,8 @@ def test_pages():
         assert client.get(path).status_code==404
     assert 'Classe</small>' not in client.get('/carteira').text
     assert 'Classe</small>' not in client.get('/reab').text
-    assert 'TURNO ROTA CHAR' in client.get('/producao').text
+    production_page=client.get('/producao').text
+    assert 'Turno Rota' in production_page and '>Turno<' in production_page
 
 def test_configuration_crud_and_logs():
     from uuid import uuid4
