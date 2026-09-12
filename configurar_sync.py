@@ -13,4 +13,5 @@ try:interval=max(1,int(interval))
 except ValueError:raise SystemExit('ERRO: intervalo inválido.')
 payload={'server_url':url,'api_key':key,'interval_minutes':interval,'sources':{}}
 target.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-print('\nConfiguração salva. As fontes serão lidas automaticamente de data\\operacional.db.')
+print('\nConfiguração salva.')
+print('As fontes e os caminhos serão obtidos automaticamente da tela Configurações do sistema.')

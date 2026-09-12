@@ -37,6 +37,17 @@ def _safe_members(book):
 def sync_health(x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key);return {'ok':True,'service':'operacional-sync'}
 
+@router.get('/api/sync/config')
+def sync_config(x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    sources=[]
+    for item in store.list_sources():
+        name=item['name'].strip();key=next((key for key,value in ALLOWED.items() if value.upper()==name.upper()),None)
+        origin=(item.get('origin_path') or '').strip()
+        if key and origin and item.get('enabled'):
+            sources.append({'id':item['id'],'name':name,'key':key,'path':origin,'schedule':item.get('schedule'),'revision':item.get('sync_revision') or 0})
+    return {'ok':True,'sources':sources}
+
 @router.post('/api/sync/source/{source_key}')
 def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|None=Header(None),x_content_sha256:str|None=Header(None)):
     _authorize(x_sync_key);name=ALLOWED.get(source_key.lower())
@@ -61,7 +72,7 @@ def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|No
         source_id=store.upsert_synced_source(name,version);run_source(source_id);status=store.get_source(source_id)
         if status.get('status')!='SUCCESS':
             if previous_path:
-                store.update_source(source_id,{'name':previous['name'],'path':previous_path,'schedule':previous['schedule'],'enabled':bool(previous['enabled'])})
+                store.restore_source_runtime(source_id,previous_path)
                 store.set_source_status(source_id,'SUCCESS','Nova carga rejeitada · última versão válida mantida')
             else:store.delete_source(source_id)
             shutil.rmtree(version,ignore_errors=True)

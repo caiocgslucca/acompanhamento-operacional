@@ -30,7 +30,7 @@ class SettingsPayload(BaseModel):
 def source_row(item):
     checked='checked' if item['enabled'] else ''
     esc=lambda value: str(value).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
-    name,path,schedule=esc(item['name']),esc(item['path']),esc(item['schedule'])
+    name,path,schedule=esc(item['name']),esc(item.get('origin_path') or item['path']),esc(item['schedule'])
     try:
         cfg=json.loads(item['schedule']); kind=cfg.get('type','manual')
         if kind=='interval': schedule_label=f"A cada {cfg.get('value',1)} {cfg.get('unit','hora(s)')}"
@@ -91,6 +91,8 @@ def logs(): return {'ok':True,'lines':store.recent_events(120)}
 
 @router.post('/api/configuracoes/validate-path')
 def validate_path(payload:PathPayload):
+    if __import__('os').name!='nt':
+        return {'ok':True,'exists':None,'is_directory':None,'message':'Caminho registrado. O sincronizador local fará a validação no computador.'}
     path=Path(payload.path).expanduser(); exists=path.exists(); is_dir=path.is_dir() if exists else False
     store.logger.info('PATH_VALIDATION | path=%s | exists=%s | is_dir=%s',payload.path,exists,is_dir)
     return {'ok':True,'exists':exists,'is_directory':is_dir,'message':'Pasta encontrada e acessível.' if is_dir else 'Caminho não encontrado ou sem acesso.'}
@@ -112,6 +114,9 @@ def select_path(payload:PickerPayload):
 @router.post('/api/configuracoes/sources/{source_id}/run')
 def run_source(source_id:int,background_tasks:BackgroundTasks):
     if not store.get_source(source_id): raise HTTPException(404,'Fonte não encontrada.')
+    if __import__('os').name!='nt':
+        store.request_source_sync(source_id)
+        return {'ok':True,'message':'Atualização solicitada ao sincronizador local.'}
     store.set_source_status(source_id,'RUNNING','Atualização solicitada · aguardando processamento')
     background_tasks.add_task(job_manager.run_source,source_id)
     return {'ok':True,'message':'Atualização iniciada em segundo plano.'}

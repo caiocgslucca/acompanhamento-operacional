@@ -44,8 +44,9 @@ def initialize():
         CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL, schedule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);
         """)
         columns={row[1] for row in con.execute("PRAGMA table_info(sources)")}
-        for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL")):
+        for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL"),("origin_path","TEXT","''"),("sync_revision","INTEGER","0")):
             if name not in columns: con.execute(f"ALTER TABLE sources ADD COLUMN {name} {sql_type} DEFAULT {default}")
+        con.execute("UPDATE sources SET origin_path=path WHERE COALESCE(origin_path,'')='' AND path NOT LIKE '%cloud_sources%'")
         con.execute("INSERT OR IGNORE INTO settings(id,payload) VALUES(1,?)", (json.dumps(DEFAULT_SETTINGS),))
         if con.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 0:
             con.executemany("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,?)", DEFAULT_SOURCES)
@@ -60,6 +61,7 @@ def initialize():
                 con.execute("UPDATE sources SET path=?,schedule=?,enabled=1 WHERE id=?",(path,schedule,current['id']))
             else:
                 con.execute("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,1)",(name,path,schedule))
+        con.execute("UPDATE sources SET origin_path=path WHERE COALESCE(origin_path,'')='' AND path NOT LIKE '%cloud_sources%'")
     logger.info("STARTUP | Banco de configurações inicializado | db=%s", DB_PATH)
 
 def list_sources():
@@ -86,14 +88,17 @@ def save_settings(payload):
 
 def create_source(data):
     with _lock, connect() as con:
-        cur=con.execute("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,?)",(data["name"].strip(),data["path"].strip(),data["schedule"].strip(),int(data.get("enabled",True))))
+        cur=con.execute("INSERT INTO sources(name,path,origin_path,schedule,enabled,sync_revision,status,status_message) VALUES(?,?,?,?,?,1,'IDLE','Aguardando sincronizador local')",(data["name"].strip(),data["path"].strip(),data["path"].strip(),data["schedule"].strip(),int(data.get("enabled",True))))
         source_id=cur.lastrowid
     logger.info("SOURCE_CREATED | id=%s | name=%s | path=%s",source_id,data["name"],data["path"])
     return source_id
 
 def update_source(source_id,data):
     with _lock, connect() as con:
-        cur=con.execute("UPDATE sources SET name=?,path=?,schedule=?,enabled=? WHERE id=?",(data["name"].strip(),data["path"].strip(),data["schedule"].strip(),int(data.get("enabled",True)),source_id))
+        current=con.execute("SELECT path FROM sources WHERE id=?",(source_id,)).fetchone()
+        if not current: raise KeyError(source_id)
+        runtime_path=current['path'] if 'cloud_sources' in str(current['path']) else data['path'].strip()
+        cur=con.execute("UPDATE sources SET name=?,path=?,origin_path=?,schedule=?,enabled=?,sync_revision=COALESCE(sync_revision,0)+1,status='IDLE',status_message='Aguardando sincronizador local' WHERE id=?",(data["name"].strip(),runtime_path,data["path"].strip(),data["schedule"].strip(),int(data.get("enabled",True)),source_id))
         if not cur.rowcount: raise KeyError(source_id)
     logger.info("SOURCE_UPDATED | id=%s | name=%s",source_id,data["name"])
 
@@ -103,17 +108,26 @@ def upsert_synced_source(name,path):
         row=con.execute("SELECT id FROM sources WHERE UPPER(name)=UPPER(?)",(name,)).fetchone()
         schedule='{"type":"manual"}'
         if row:
-            source_id=row['id'];con.execute("UPDATE sources SET path=?,schedule=?,enabled=1 WHERE id=?",(str(path),schedule,source_id))
+            source_id=row['id'];con.execute("UPDATE sources SET path=?,enabled=1 WHERE id=?",(str(path),source_id))
         else:
-            source_id=con.execute("INSERT INTO sources(name,path,schedule,enabled) VALUES(?,?,?,1)",(name,str(path),schedule)).lastrowid
+            source_id=con.execute("INSERT INTO sources(name,path,origin_path,schedule,enabled,sync_revision) VALUES(?,?,?, ?,1,0)",(name,str(path),'',schedule)).lastrowid
     logger.info("SYNC_SOURCE_PUBLISHED | id=%s | fonte=%s | caminho=%s",source_id,name,path)
     return source_id
+
+def restore_source_runtime(source_id,path):
+    with _lock, connect() as con: con.execute("UPDATE sources SET path=? WHERE id=?",(str(path),source_id))
 
 def toggle_source(source_id,enabled):
     with _lock, connect() as con:
         cur=con.execute("UPDATE sources SET enabled=? WHERE id=?",(int(enabled),source_id))
         if not cur.rowcount: raise KeyError(source_id)
     logger.info("SOURCE_TOGGLED | id=%s | enabled=%s",source_id,enabled)
+
+def request_source_sync(source_id):
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE sources SET sync_revision=COALESCE(sync_revision,0)+1,status='RUNNING',status_message='Solicitação enviada ao sincronizador local' WHERE id=?",(source_id,))
+        if not cur.rowcount: raise KeyError(source_id)
+    logger.info("SOURCE_SYNC_REQUESTED | id=%s",source_id)
 
 def delete_source(source_id):
     with _lock, connect() as con:
