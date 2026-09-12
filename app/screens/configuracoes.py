@@ -69,6 +69,17 @@ def picker_token():
     token=hashlib.sha256((key+'|operacional-local-picker').encode()).hexdigest()
     return {'ok':True,'token':token,'url':'http://127.0.0.1:8765'}
 
+@router.post('/api/configuracoes/picker-requests')
+def request_picker(payload:PickerPayload):
+    request_id=store.create_picker_request(payload.mode)
+    return {'ok':True,'request_id':request_id,'status':'PENDING'}
+
+@router.get('/api/configuracoes/picker-requests/{request_id}')
+def picker_request_status(request_id:str):
+    item=store.get_picker_request(request_id)
+    if not item:raise HTTPException(404,'Solicitação do seletor não encontrada ou expirada.')
+    return {'ok':True,'status':item['status'],'selected':item['selected_path'] or None,'error':item['error'] or None}
+
 @router.post('/api/configuracoes/sources')
 def add_source(payload: SourcePayload):
     try: source_id=store.create_source(payload.model_dump())

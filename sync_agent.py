@@ -1,5 +1,4 @@
 import hashlib
-import hmac
 import json
 import logging
 import os
@@ -11,17 +10,13 @@ import threading
 import time
 import unicodedata
 import zipfile
-from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs,urlparse
 import httpx
 
 ROOT=Path(__file__).resolve().parent
 CONFIG=ROOT/'sync_config.json';STATE=ROOT/'data'/'sync_state.json';LOG=ROOT/'logs'/'sincronizador.log'
 SUPPORTED={'.xlsx','.xlsm','.csv'}
 REMOTE_KEYS={'CARTEIRA':'carteira','ONDA':'onda','LOJAS':'lojas','LOJA':'lojas','REAB':'reab','A EXTRAIR':'a-extrair','A_EXTRAIR':'a-extrair','AGUARDANDO LIBERACAO':'a-extrair'}
-
-def picker_token(key):return hashlib.sha256((key+'|operacional-local-picker').encode()).hexdigest()
 
 def native_select(mode):
     if os.name!='nt':return ''
@@ -33,24 +28,28 @@ def native_select(mode):
     result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-STA','-Command',script],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=300)
     return result.stdout.strip().splitlines()[-1].strip() if result.returncode==0 and result.stdout.strip() else ''
 
-def start_picker_server(key,log):
-    expected=picker_token(key)
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self,*_):pass
-        def do_GET(self):
-            parsed=urlparse(self.path);params=parse_qs(parsed.query)
-            supplied=(params.get('token') or [''])[0];mode=(params.get('mode') or ['folder'])[0]
-            if parsed.path!='/pick' or mode not in {'folder','file'} or not hmac.compare_digest(supplied,expected):
-                self.send_response(403);self.end_headers();return
-            try:selected=native_select(mode)
-            except Exception as exc:log.exception('LOCAL_PICKER_FAILED | erro=%s',exc);selected=''
-            value=json.dumps(selected,ensure_ascii=False).replace('</','<\\/')
-            body=f'''<!doctype html><meta charset="utf-8"><script>const target=window.opener||window.parent;if(target)target.postMessage({{type:'operacional-path',path:{value}}},'*');if(window.opener)window.close()</script>'''.encode('utf-8')
-            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
-    try:
-        server=ThreadingHTTPServer(('127.0.0.1',8765),Handler)
-    except OSError as exc:log.warning('LOCAL_PICKER_UNAVAILABLE | porta=8765 | erro=%s',exc);return
-    threading.Thread(target=server.serve_forever,name='operacional-picker',daemon=True).start();log.info('LOCAL_PICKER_READY | endereco=127.0.0.1:8765')
+def remote_picker_worker(config,log):
+    server=str(config.get('server_url','')).strip().rstrip('/');key=str(config.get('api_key','')).strip()
+    headers={'X-Sync-Key':key}
+    log.info('SELETOR_REMOTO_ATIVO | consulta_segundos=1')
+    while True:
+        try:
+            with httpx.Client(timeout=30,follow_redirects=True) as client:
+                response=client.get(f'{server}/api/sync/picker/request',headers=headers);response.raise_for_status()
+                request=response.json().get('request')
+                if request:
+                    request_id=request['id'];mode=request['mode'];log.info('SELETOR_SOLICITADO | id=%s | mode=%s',request_id,mode)
+                    try:
+                        selected=native_select(mode)
+                        payload={'request_id':request_id,'selected_path':selected,'error':''}
+                    except Exception as exc:
+                        log.exception('SELETOR_LOCAL_FALHOU | id=%s | erro=%s',request_id,exc)
+                        payload={'request_id':request_id,'selected_path':'','error':str(exc)}
+                    result=client.post(f'{server}/api/sync/picker/result',headers=headers,json=payload);result.raise_for_status()
+        except Exception as exc:
+            log.warning('SELETOR_REMOTO_INDISPONIVEL | erro=%s',exc)
+            time.sleep(5);continue
+        time.sleep(1)
 
 def process_lock():
     path=ROOT/'data'/'sync_agent.lock';path.parent.mkdir(parents=True,exist_ok=True);handle=path.open('a+b')
@@ -155,7 +154,7 @@ def main():
     lock=process_lock();log=logger();config=load_json(CONFIG,{})
     if not config:raise FileNotFoundError('Execute primeiro CONFIGURAR_SINCRONIZADOR.bat.')
     interval=max(1,int(config.get('interval_minutes',5)));once='--once' in sys.argv
-    if not once:start_picker_server(str(config.get('api_key','')),log)
+    if not once:threading.Thread(target=remote_picker_worker,args=(config,log),name='operacional-picker',daemon=True).start()
     log.info('SINCRONIZADOR_INICIADO | intervalo_minutos=%s | modo=%s',interval,'único' if once else 'contínuo')
     while True:
         try:run_once(config,log)

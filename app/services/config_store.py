@@ -4,6 +4,7 @@ import os
 import sqlite3
 import re
 import sys
+import uuid
 from pathlib import Path
 from threading import Lock
 
@@ -42,6 +43,7 @@ def initialize():
         con.executescript("""
         CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL, schedule TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE IF NOT EXISTS picker_requests (id TEXT PRIMARY KEY, mode TEXT NOT NULL, status TEXT NOT NULL, selected_path TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         """)
         columns={row[1] for row in con.execute("PRAGMA table_info(sources)")}
         for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL"),("origin_path","TEXT","''"),("sync_revision","INTEGER","0")):
@@ -145,3 +147,36 @@ def recent_events(limit=120):
     lines=recent_logs(500)
     events=[line for line in lines if re.match(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2} \| (INFO|WARNING|ERROR|CRITICAL) \| ',line)]
     return events[:max(1,min(limit,200))]
+
+def create_picker_request(mode):
+    from datetime import datetime, timedelta
+    request_id=uuid.uuid4().hex;now=datetime.now().isoformat(timespec='seconds')
+    cutoff=(datetime.now()-timedelta(minutes=10)).isoformat(timespec='seconds')
+    with _lock, connect() as con:
+        con.execute("DELETE FROM picker_requests WHERE created_at<?",(cutoff,))
+        con.execute("UPDATE picker_requests SET status='CANCELLED',error='Substituído por uma nova solicitação',updated_at=? WHERE status IN ('PENDING','PROCESSING')",(now,))
+        con.execute("INSERT INTO picker_requests(id,mode,status,created_at,updated_at) VALUES(?,?,'PENDING',?,?)",(request_id,mode,now,now))
+    logger.info('PICKER_REQUESTED | id=%s | mode=%s',request_id,mode)
+    return request_id
+
+def claim_picker_request():
+    from datetime import datetime
+    now=datetime.now().isoformat(timespec='seconds')
+    with _lock, connect() as con:
+        row=con.execute("SELECT * FROM picker_requests WHERE status='PENDING' ORDER BY created_at LIMIT 1").fetchone()
+        if not row:return None
+        con.execute("UPDATE picker_requests SET status='PROCESSING',updated_at=? WHERE id=? AND status='PENDING'",(now,row['id']))
+        return dict(row)
+
+def complete_picker_request(request_id,selected_path='',error=''):
+    from datetime import datetime
+    status='ERROR' if error else ('COMPLETED' if selected_path else 'CANCELLED')
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE picker_requests SET status=?,selected_path=?,error=?,updated_at=? WHERE id=?",(status,selected_path,error,datetime.now().isoformat(timespec='seconds'),request_id))
+        if not cur.rowcount:raise KeyError(request_id)
+    logger.info('PICKER_FINISHED | id=%s | status=%s',request_id,status)
+
+def get_picker_request(request_id):
+    with connect() as con:
+        row=con.execute("SELECT * FROM picker_requests WHERE id=?",(request_id,)).fetchone()
+        return dict(row) if row else None

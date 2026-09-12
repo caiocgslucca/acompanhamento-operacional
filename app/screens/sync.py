@@ -6,6 +6,7 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from app.services import config_store as store
 from app.services.job_manager import run_source
 
@@ -15,6 +16,11 @@ ALLOWED={
     'a-extrair':'A Extrair','a_extrair':'A Extrair','aguardando-liberacao':'A Extrair'
 }
 SUPPORTED={'.xlsx','.xlsm','.csv'}
+
+class PickerResult(BaseModel):
+    request_id:str=Field(min_length=32,max_length=32)
+    selected_path:str=''
+    error:str=''
 
 def _authorize(key):
     expected=os.getenv('SYNC_API_KEY','').strip()
@@ -47,6 +53,19 @@ def sync_config(x_sync_key:str|None=Header(None)):
         if key and origin and item.get('enabled'):
             sources.append({'id':item['id'],'name':name,'key':key,'path':origin,'schedule':item.get('schedule'),'revision':item.get('sync_revision') or 0})
     return {'ok':True,'sources':sources}
+
+@router.get('/api/sync/picker/request')
+def sync_picker_request(x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key);item=store.claim_picker_request()
+    if not item:return {'ok':True,'request':None}
+    return {'ok':True,'request':{'id':item['id'],'mode':item['mode']}}
+
+@router.post('/api/sync/picker/result')
+def sync_picker_result(payload:PickerResult,x_sync_key:str|None=Header(None)):
+    _authorize(x_sync_key)
+    try:store.complete_picker_request(payload.request_id,payload.selected_path.strip(),payload.error.strip())
+    except KeyError:raise HTTPException(404,'Solicitação do seletor não encontrada.')
+    return {'ok':True}
 
 @router.post('/api/sync/source/{source_key}')
 def receive_source(source_key:str,archive:UploadFile=File(...),x_sync_key:str|None=Header(None),x_content_sha256:str|None=Header(None)):
