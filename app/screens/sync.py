@@ -37,6 +37,8 @@ class ReportConfig(BaseModel):
 class ReportResult(BaseModel):
     status:str=Field(pattern='^(SUCCESS|ERROR|RUNNING)$')
     message:str=Field(default='',max_length=500)
+class ReportFilters(BaseModel):
+    filters:str=Field(default='{}',max_length=5000)
 
 REPORT_MODULES={'carteira':'Carteira','reab':'Reab','producao':'Demanda e Produção'}
 
@@ -127,6 +129,26 @@ def update_report_config(module:str,payload:ReportConfig):
     saved=store.save_report_export(module,{'destination_path':payload.destination_path,'filename':filename,'schedule':json.dumps(schedule,ensure_ascii=False),'enabled':payload.enabled,'filters':json.dumps(filters,ensure_ascii=False)})
     return {'ok':True,'data':saved}
 
+@router.patch('/api/report-config/{module}/filters')
+def update_report_filters(module:str,payload:ReportFilters):
+    if module not in REPORT_MODULES:raise HTTPException(404,'Módulo de relatório inválido.')
+    try:
+        filters=json.loads(payload.filters or '{}')
+        if not isinstance(filters,dict):raise ValueError()
+        clean={}
+        for key,values in filters.items():
+            if not isinstance(values,list):raise ValueError()
+            clean[str(key)]=[str(value) for value in values if str(value).strip()]
+    except (json.JSONDecodeError,ValueError,TypeError):
+        raise HTTPException(422,'Filtros do PDF inválidos.')
+    current=store.get_report_export(module)
+    if not current:
+        # Ainda não há configuração de automação. O filtro continua salvo no
+        # navegador e será gravado quando o usuário configurar o PDF.
+        return {'ok':True,'configured':False,'filters':clean}
+    store.update_report_filters(module,json.dumps(clean,ensure_ascii=False))
+    return {'ok':True,'configured':True,'filters':clean}
+
 @router.get('/api/sync/reports')
 def sync_reports(x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key)
@@ -137,15 +159,15 @@ def sync_report_pdf(module:str,x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key)
     if module=='carteira':
         from app.screens.carteira import pdf
-        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}');store.logger.info('PDF_AUTOMATIC_FILTERS | modulo=%s | filtros=%s',module,json.dumps(f,ensure_ascii=False))
         return pdf(f.get('empresa',[]),f.get('rota',[]),f.get('status',[]))
     elif module=='reab':
         from app.screens.reab import pdf
-        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}');store.logger.info('PDF_AUTOMATIC_FILTERS | modulo=%s | filtros=%s',module,json.dumps(f,ensure_ascii=False))
         return pdf(f.get('empresa',[]),f.get('rota',[]),f.get('status',[]))
     elif module=='producao':
         from app.screens.producao import pdf
-        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}');store.logger.info('PDF_AUTOMATIC_FILTERS | modulo=%s | filtros=%s',module,json.dumps(f,ensure_ascii=False))
         return pdf(f.get('empresa',[]),f.get('classe',[]),f.get('data',[]),f.get('turno',[]),f.get('turno_rota',[]))
     else:raise HTTPException(404,'Módulo de relatório inválido.')
 

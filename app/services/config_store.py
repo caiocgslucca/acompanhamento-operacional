@@ -96,6 +96,21 @@ def list_report_exports(enabled_only=False):
     sql="SELECT * FROM report_exports"+(" WHERE enabled=1" if enabled_only else "")+" ORDER BY module"
     with connect() as con:return [dict(row) for row in con.execute(sql)]
 
+def update_report_filters(module, filters):
+    """Atualiza somente os filtros usados pelo PDF automático.
+
+    Não altera updated_at, last_run, revision ou o agendamento. Assim, trocar um
+    filtro na tela muda o conteúdo da próxima geração automática sem deslocar a
+    janela já programada.
+    """
+    payload=filters if isinstance(filters,str) else json.dumps(filters,ensure_ascii=False)
+    with _lock, connect() as con:
+        cur=con.execute("UPDATE report_exports SET filters=? WHERE module=?",(payload,module))
+        # Se o módulo ainda não foi configurado, não cria automação fantasma.
+        if not cur.rowcount:return None
+    logger.info('REPORT_FILTERS_UPDATED | modulo=%s | filtros=%s',module,payload[:1000])
+    return get_report_export(module)
+
 def set_report_export_result(module,status,message,completed=False):
     from datetime import datetime, timezone
     with _lock, connect() as con:

@@ -1,0 +1,16 @@
+V51 - PDF AUTOMATICO COM FILTROS ATIVOS
+
+CORRECAO PRINCIPAL
+- O PDF automatico agora usa os filtros atualmente aplicados na tela, sem depender de abrir novamente Configurar PDF.
+- Ao clicar em Aplicar em qualquer filtro, o navegador sincroniza o snapshot aplicado com o servidor.
+- Ao clicar em Limpar filtros, o servidor tambem recebe o estado limpo.
+- Ao entrar novamente em Carteira, Reab ou Demanda e Producao, os filtros persistidos daquela aba sao sincronizados com a automacao.
+- A sincronizacao dos filtros nao altera a hora da proxima geracao, last_run ou o agendamento configurado.
+- Vale para Carteira, Reab e Demanda e Producao.
+- O endpoint de geracao automatica le os filtros mais recentes no instante em que o PDF e solicitado pelo sincronizador local.
+- Novo log PDF_AUTOMATIC_FILTERS mostra exatamente os filtros usados em cada PDF automatico.
+- Cache dos arquivos JS/CSS atualizado para v51, evitando navegador executar o app.js antigo.
+
+IMPORTANTE
+- PDF manual continua usando os filtros aplicados no momento do clique.
+- PDF automatico passa a acompanhar os mesmos filtros aplicados na tela.
