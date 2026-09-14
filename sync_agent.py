@@ -201,18 +201,54 @@ def send(client,server,key,name,path_text,previous,log,revision=0,source_id=None
     if previous.get(remote)==state_key:log.info('ARQUIVOS_SEM_ALTERACAO | fonte=%s | reenviando_por_agendamento=true',name)
     archive=make_archive(files,base)
     try:
-        package_hash=hashlib.sha256(archive.read_bytes()).hexdigest();log.info('ENVIO_INICIADO | fonte=%s | arquivos=%s | tamanho_mb=%.1f',name,len(files),archive.stat().st_size/1048576)
-        with archive.open('rb') as payload:
-            response=client.post(f'{server}/api/sync/source/{remote}',headers={'X-Sync-Key':key,'X-Content-SHA256':package_hash},files={'archive':('fonte.zip',payload,'application/zip')})
-        if response.is_error:
-            try:detail=response.json().get('detail') or response.text
-            except Exception:detail=response.text
-            raise RuntimeError(f'Railway rejeitou a carga ({response.status_code}): {detail}')
-        body=response.json()
-        if not body.get('ok'):raise RuntimeError(body.get('message') or 'Servidor recusou a publicação.')
-        previous[remote]=state_key;log.info('ENVIO_CONCLUIDO | fonte=%s | arquivos=%s | %s',name,body.get('files'),body.get('message','publicado'))
-        return previous
-    finally:archive.unlink(missing_ok=True)
+        # O ZIP e o hash são montados uma única vez. Se a rede corporativa/antivírus
+        # derrubar um upload grande, a mesma carga é reaproveitada nas tentativas.
+        package_hash=hashlib.sha256(archive.read_bytes()).hexdigest()
+        size_mb=archive.stat().st_size/1048576
+        log.info('ENVIO_INICIADO | fonte=%s | arquivos=%s | tamanho_mb=%.1f',name,len(files),size_mb)
+        max_attempts=5
+        last_error=None
+        for attempt in range(1,max_attempts+1):
+            try:
+                if attempt>1:
+                    log.info('ENVIO_NOVA_TENTATIVA | fonte=%s | tentativa=%s/%s | tamanho_mb=%.1f',name,attempt,max_attempts,size_mb)
+                # Conexão nova por tentativa: evita reutilizar socket abortado (WinError 10053).
+                timeout=httpx.Timeout(connect=30.0,read=900.0,write=900.0,pool=30.0)
+                limits=httpx.Limits(max_keepalive_connections=0,max_connections=2)
+                with httpx.Client(timeout=timeout,follow_redirects=True,limits=limits) as upload_client:
+                    with archive.open('rb') as payload:
+                        response=upload_client.post(
+                            f'{server}/api/sync/source/{remote}',
+                            headers={
+                                'X-Sync-Key':key,
+                                'X-Content-SHA256':package_hash,
+                                'Connection':'close',
+                            },
+                            files={'archive':('fonte.zip',payload,'application/zip')},
+                        )
+                if response.is_error:
+                    try:detail=response.json().get('detail') or response.text
+                    except Exception:detail=response.text
+                    # 4xx normalmente é configuração/requisição e não melhora repetindo.
+                    if 400<=response.status_code<500:
+                        raise RuntimeError(f'Railway rejeitou a carga ({response.status_code}): {detail}')
+                    raise httpx.HTTPStatusError(f'Railway respondeu {response.status_code}: {detail}',request=response.request,response=response)
+                body=response.json()
+                if not body.get('ok'):raise RuntimeError(body.get('message') or 'Servidor recusou a publicação.')
+                previous[remote]=state_key
+                log.info('ENVIO_CONCLUIDO | fonte=%s | arquivos=%s | %s | tentativa=%s/%s',name,body.get('files'),body.get('message','publicado'),attempt,max_attempts)
+                return previous
+            except (httpx.TransportError,httpx.HTTPStatusError) as exc:
+                last_error=exc
+                if attempt>=max_attempts:break
+                wait=(2,5,10,20)[attempt-1]
+                log.warning('ENVIO_INTERROMPIDO_RETRY | fonte=%s | tentativa=%s/%s | erro=%s | nova_tentativa_em=%ss',name,attempt,max_attempts,exc,wait)
+                time.sleep(wait)
+            except RuntimeError:
+                raise
+        raise RuntimeError(f'Upload de {name} falhou após {max_attempts} tentativas. Último erro: {last_error}') from last_error
+    finally:
+        archive.unlink(missing_ok=True)
 
 def save_state(state):
     STATE.parent.mkdir(parents=True,exist_ok=True);temporary=STATE.with_suffix('.tmp');temporary.write_text(json.dumps(state,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(temporary,STATE)

@@ -52,7 +52,13 @@ if not exist "sync_config.json" "%PYTHON_EXE%" configurar_sync.py || goto :erro_
 echo As fontes serao obtidas automaticamente da tela Configuracoes.
 
 echo [7/8] Testando conexao e primeiro envio...
-"%PYTHON_EXE%" sync_agent.py --once || goto :erro_envio
+"%PYTHON_EXE%" sync_agent.py --once
+if errorlevel 1 (
+  echo AVISO: o primeiro envio nao foi concluido.
+  echo O sincronizador automatico sera ativado e tentara novamente em segundo plano.
+) else (
+  echo Primeiro envio concluido com sucesso.
+)
 
 echo [8/8] Ativando sincronizacao automatica no Windows...
 call INSTALAR_SINCRONIZADOR_AUTOMATICO.bat || goto :erro_inicio
@@ -97,8 +103,8 @@ goto :falha
 echo ERRO: configuracao do Railway ou das fontes nao concluida.
 goto :falha
 :erro_envio
-echo ERRO: a conexao ou o primeiro envio para o Railway falhou.
-goto :falha
+echo AVISO: primeiro envio indisponivel. A instalacao continuara com novas tentativas automaticas.
+goto :erro_inicio
 :erro_inicio
 echo ERRO: nao foi possivel ativar a inicializacao automatica.
 :falha

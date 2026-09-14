@@ -1,0 +1,11 @@
+V50 - Upload robusto para fontes grandes
+
+- Corrigido WinError 10053 durante envio da Carteira.
+- Até 5 tentativas automáticas por carga com backoff de 2s, 5s, 10s e 20s.
+- Cada tentativa abre uma conexão HTTPS nova, sem reaproveitar socket abortado.
+- Timeout de leitura/escrita elevado para 900 segundos em uploads grandes.
+- O ZIP e SHA-256 são gerados uma única vez e reaproveitados nas tentativas.
+- O arquivo temporário só é removido depois do sucesso ou esgotamento das tentativas.
+- Falha transitória no primeiro envio não cancela mais a instalação.
+- O sincronizador automático é instalado e continua tentando em segundo plano.
+- Falha de uma fonte não marca seu agendamento como concluído; ela volta no próximo ciclo.
