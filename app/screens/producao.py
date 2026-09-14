@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter,Query,BackgroundTasks
 from fastapi.responses import HTMLResponse,StreamingResponse
 from app.services.ui import layout
@@ -21,7 +22,8 @@ def page():
 @router.get('/api/producao/data')
 def data(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Query([]),turno:list[str]=Query([]),turno_rota:list[str]=Query([])):
     try:
-        result=build({'empresa':empresa,'classe':classe,'data':data,'turno':turno,'turno_rota':turno_rota});source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
+        result=build({'empresa':empresa,'classe':classe,'data':data,'turno':turno,'turno_rota':turno_rota});sources=[s for s in store.list_sources() if clean_name(s['name']) in carteira_related_names()];source=next((s for s in sources if clean_name(s['name'])=='CARTEIRA'),None)
+        latest=max((s.get('last_run') for s in sources if s.get('last_run')),default=result['meta'].get('updated_at'));result['meta']['updated_at']=latest
         result['meta']['next_run']=next_run_for(source['id']) if source else None;result['meta']['revision']=data_revision();return {'ok':True,'data':result}
     except Exception as exc:store.logger.exception('PRODUCAO_BUILD_FAILED | erro=%s',exc);return {'ok':False,'message':str(exc)}
 
@@ -49,7 +51,7 @@ def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Qu
     selected={'empresa':empresa,'classe':classe,'data':data,'turno':turno,'turno_rota':turno_rota};result=build(selected);buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
     green=colors.HexColor('#075638');amber=colors.HexColor('#F0B323');muted=colors.HexColor('#60736A');fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     c.setFillColor(green);c.rect(0,height-72,width,72,fill=1,stroke=0);c.setFillColor(amber);c.roundRect(28,height-58,38,38,8,fill=1,stroke=0);c.setFillColor(green);c.setFont('Helvetica-Bold',25);c.drawCentredString(47,height-50,'L')
-    c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Controle de Demanda e Produção');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · EXECUÇÃO POR ONDA');c.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))
+    c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Controle de Demanda e Produção');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · EXECUÇÃO POR ONDA');c.drawRightString(width-28,height-39,datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('Emitido em %d/%m/%Y às %H:%M'))
     totals=result['totals'];cards=[('REGISTROS',fmt(result['meta']['rows'])),('TOTAL A PRODUZIR',fmt(totals['produzir'])),('QTD. PENDENTE',fmt(totals['pendente'])),('% CONCLUÍDO',f"{totals['concluido']:.1f}%".replace('.',','))];card_y=height-118;card_w=(width-70)/4
     for index,(label,value) in enumerate(cards):
         x=28+index*(card_w+5);c.setFillColor(colors.HexColor('#F3F8F5'));c.roundRect(x,card_y,card_w,35,6,fill=1,stroke=0);c.setFillColor(muted);c.setFont('Helvetica-Bold',5.8);c.drawString(x+10,card_y+23,label);c.setFillColor(green);c.setFont('Helvetica-Bold',12);c.drawString(x+10,card_y+8,value)
@@ -62,4 +64,4 @@ def pdf(empresa:list[str]=Query([]),classe:list[str]=Query([]),data:list[str]=Qu
     top=card_y-48;max_height=top-36;row_height=max(13,min(21,max_height/max(1,len(rows))));table=Table(rows,colWidths=[300,118,108,108,108,92],rowHeights=[row_height]*len(rows))
     table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),green),('TEXTCOLOR',(0,0),(-1,0),colors.white),('BACKGROUND',(0,1),(0,-2),colors.HexColor('#E7F2EC')),('BACKGROUND',(0,-1),(-1,-1),green),('TEXTCOLOR',(0,-1),(-1,-1),colors.white),('ROWBACKGROUNDS',(1,1),(-1,-2),[colors.white,colors.HexColor('#F7F9F8')]),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'),('FONTNAME',(0,1),(0,-1),'Helvetica-Bold'),('FONTSIZE',(0,0),(-1,-1),7),('ALIGN',(1,0),(-1,-1),'RIGHT'),('VALIGN',(0,0),(-1,-1),'MIDDLE'),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#DCE5E0')),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
     _,table_height=table.wrap(width-56,max_height);table.drawOn(c,28,top-table_height);c.setStrokeColor(colors.HexColor('#DDE6E1'));c.line(28,25,width-28,25);c.setFillColor(muted);c.setFont('Helvetica',6);c.drawString(28,14,'Leo Madeiras · Acompanhamento Operacional');c.drawRightString(width-28,14,'Relatório consolidado em página única');c.showPage();c.save();buffer.seek(0);store.logger.info('PRODUCAO_PDF_EXPORTED | linhas=%s | paginas=1',result['meta']['rows'])
-    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="demanda_producao_{datetime.now():%Y%m%d_%H%M}.pdf"'})
+    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="demanda_producao_{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y%m%d_%H%M}.pdf"'})

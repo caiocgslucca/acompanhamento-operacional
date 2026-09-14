@@ -68,7 +68,13 @@ def next_run_for(source_id):
     kind=cfg.get('type');local_zone=ZoneInfo('America/Sao_Paulo');local_last=last.astimezone(local_zone)
     if kind=='interval':
         value=max(1,int(cfg.get('value',1)));delta=timedelta(minutes=value) if str(cfg.get('unit','')).startswith('minuto') else timedelta(hours=value)
-        return (last+delta).isoformat(timespec='seconds')
+        candidate=last+delta
+        now=datetime.now(timezone.utc)
+        # Nunca devolve horário vencido na interface. Se um ciclo atrasou, avança
+        # para a próxima janela futura mantendo a cadência configurada.
+        while candidate<=now:
+            candidate+=delta
+        return candidate.isoformat(timespec='seconds')
     if kind not in ('daily','weekly'):return None
     try:hour,minute=map(int,str(cfg.get('time','06:00')).split(':'))
     except ValueError:hour,minute=6,0

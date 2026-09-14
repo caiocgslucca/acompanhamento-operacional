@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Query, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse
 from app.services.ui import layout
@@ -25,7 +26,7 @@ def data(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Q
         result=build(filters_dict(empresa,rota,status)); source=next((s for s in store.list_sources() if clean_name(s['name'])=='CARTEIRA'),None)
         result['meta']['next_run']=next_run_for(source['id']) if source else None
         related=[s.get('last_run') for s in store.list_sources() if clean_name(s['name']) in carteira_related_names() and s.get('last_run')]
-        result['meta']['data_version']=max(related) if related else result['meta'].get('updated_at')
+        result['meta']['data_version']=max(related) if related else result['meta'].get('updated_at');result['meta']['updated_at']=result['meta']['data_version']
         result['meta']['revision']=data_revision()
         return {'ok':True,'data':result}
     except Exception as exc:
@@ -71,7 +72,7 @@ def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Qu
     result=build(filters_dict(empresa,rota,status)); buffer=BytesIO(); page=landscape(A2); pdf_canvas=canvas.Canvas(buffer,pagesize=page,pageCompression=1); width,height=page
     green=colors.HexColor('#075638'); amber=colors.HexColor('#F0B323'); muted=colors.HexColor('#60736A'); fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     pdf_canvas.setFillColor(green);pdf_canvas.rect(0,height-72,width,72,fill=1,stroke=0);pdf_canvas.setFillColor(amber);pdf_canvas.roundRect(28,height-58,38,38,8,fill=1,stroke=0);pdf_canvas.setFillColor(green);pdf_canvas.setFont('Helvetica-Bold',25);pdf_canvas.drawCentredString(47,height-50,'L')
-    pdf_canvas.setFillColor(colors.white);pdf_canvas.setFont('Helvetica-Bold',18);pdf_canvas.drawString(82,height-37,'Acompanhamento Carteira Geral');pdf_canvas.setFont('Helvetica',7);pdf_canvas.drawString(82,height-52,'VISÃO EXECUTIVA · OPERAÇÃO LOGÍSTICA');pdf_canvas.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))
+    pdf_canvas.setFillColor(colors.white);pdf_canvas.setFont('Helvetica-Bold',18);pdf_canvas.drawString(82,height-37,'Acompanhamento Carteira Geral');pdf_canvas.setFont('Helvetica',7);pdf_canvas.drawString(82,height-52,'VISÃO EXECUTIVA · OPERAÇÃO LOGÍSTICA');pdf_canvas.drawRightString(width-28,height-39,datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('Emitido em %d/%m/%Y às %H:%M'))
     cards=[('REGISTROS',fmt(result['meta']['rows'])),('PENDENTE',fmt(result['meta']['total_pending'])),('DS × ONDA · ZCHP',fmt(result['matrix_aging']['grand_total'])),('CLASSE × ONDA',fmt(result['matrix_class']['grand_total']))]
     card_y=height-118;card_w=(width-70)/4
     for index,(label,value) in enumerate(cards):
@@ -83,4 +84,4 @@ def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Qu
     for x,title,matrix in ((margin,'CARTEIRA POR FAIXA · DS × ONDA · CLASSE FIXA ZCHP',result['matrix_aging']),(margin+panel_width+gap,'CARTEIRA POR CLASSE · CLASSE × ONDA',result['matrix_class'])):
         pdf_canvas.setFillColor(green);pdf_canvas.setFont('Helvetica-Bold',8);pdf_canvas.drawString(x,title_y,title);table=_one_page_table(matrix,panel_width,max_height);_,table_height=table.wrap(panel_width,max_height);table.drawOn(pdf_canvas,x,table_top-table_height)
     pdf_canvas.setStrokeColor(colors.HexColor('#DDE6E1'));pdf_canvas.line(28,25,width-28,25);pdf_canvas.setFillColor(muted);pdf_canvas.setFont('Helvetica',6);pdf_canvas.drawString(28,14,'Leo Madeiras · Acompanhamento Operacional');pdf_canvas.drawRightString(width-28,14,'Relatório consolidado em página única');pdf_canvas.showPage();pdf_canvas.save();buffer.seek(0);store.logger.info('CARTEIRA_PDF_EXPORTED | linhas=%s | paginas=1',result['meta']['rows'])
-    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="carteira_{datetime.now():%Y%m%d_%H%M}.pdf"'})
+    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="carteira_{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y%m%d_%H%M}.pdf"'})

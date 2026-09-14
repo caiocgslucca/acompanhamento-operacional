@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Query, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse
 from app.services.ui import layout
@@ -24,7 +25,7 @@ def page():
 def data(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Query([])):
     try:
         result=build(filters_dict(empresa,rota,status));sources=[s for s in store.list_sources() if clean_name(s['name']) in related_source_names()]
-        carteira=next((s for s in sources if clean_name(s['name'])=='CARTEIRA'),None);result['meta']['next_run']=next_run_for(carteira['id']) if carteira else None
+        carteira=next((s for s in sources if clean_name(s['name'])=='CARTEIRA'),None);latest=max((s.get('last_run') for s in sources if s.get('last_run')),default=result['meta'].get('updated_at'));result['meta']['updated_at']=latest;result['meta']['next_run']=next_run_for(carteira['id']) if carteira else None
         result['meta']['revision']=data_revision();return {'ok':True,'data':result}
     except Exception as exc:store.logger.exception('REAB_BUILD_FAILED | erro=%s',exc);return {'ok':False,'message':str(exc)}
 
@@ -51,7 +52,7 @@ def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Qu
     result=build(filters_dict(empresa,rota,status));buffer=BytesIO();page=landscape(A2);c=canvas.Canvas(buffer,pagesize=page,pageCompression=1);width,height=page
     green=colors.HexColor('#075638');amber=colors.HexColor('#F0B323');muted=colors.HexColor('#60736A');fmt=lambda v:f'{v:,.0f}'.replace(',','.')
     c.setFillColor(green);c.rect(0,height-72,width,72,fill=1,stroke=0);c.setFillColor(amber);c.roundRect(28,height-58,38,38,8,fill=1,stroke=0);c.setFillColor(green);c.setFont('Helvetica-Bold',25);c.drawCentredString(47,height-50,'L')
-    c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Acompanhamento Reab');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · REABASTECIMENTO POR LOJA');c.drawRightString(width-28,height-39,datetime.now().strftime('Emitido em %d/%m/%Y às %H:%M'))
+    c.setFillColor(colors.white);c.setFont('Helvetica-Bold',18);c.drawString(82,height-37,'Acompanhamento Reab');c.setFont('Helvetica',7);c.drawString(82,height-52,'VISÃO EXECUTIVA · REABASTECIMENTO POR LOJA');c.drawRightString(width-28,height-39,datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('Emitido em %d/%m/%Y às %H:%M'))
     cards=[('REGISTROS',fmt(result['meta']['rows'])),('PENDENTE',fmt(result['meta']['total_pending'])),('DS × LOJA · ZCHP',fmt(result['matrix_aging']['grand_total'])),('CLASSES × LOJA',fmt(result['matrix_class']['grand_total']))];card_y=height-118;card_w=(width-70)/4
     for index,(label,value) in enumerate(cards):
         x=28+index*(card_w+5);c.setFillColor(colors.HexColor('#F3F8F5'));c.roundRect(x,card_y,card_w,35,6,fill=1,stroke=0);c.setFillColor(muted);c.setFont('Helvetica-Bold',5.8);c.drawString(x+10,card_y+23,label);c.setFillColor(green);c.setFont('Helvetica-Bold',12);c.drawString(x+10,card_y+8,value)
@@ -59,4 +60,4 @@ def pdf(empresa:list[str]=Query([]),rota:list[str]=Query([]),status:list[str]=Qu
     for x,title,matrix in ((margin,'CLASSE VS DS VS LOJA · CLASSE FIXA ZCHP',result['matrix_aging']),(margin+panel_width+gap,'TODAS AS CLASSES VS LOJA',result['matrix_class'])):
         c.setFillColor(green);c.setFont('Helvetica-Bold',8);c.drawString(x,title_y,title);table=_one_page_table(matrix,panel_width,max_height);_,h=table.wrap(panel_width,max_height);table.drawOn(c,x,table_top-h)
     c.setFillColor(muted);c.setFont('Helvetica',6);c.drawString(28,14,'Leo Madeiras · Acompanhamento Reab');c.drawRightString(width-28,14,'Relatório consolidado em página única');c.showPage();c.save();buffer.seek(0)
-    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="reab_{datetime.now():%Y%m%d_%H%M}.pdf"'})
+    return StreamingResponse(buffer,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="reab_{datetime.now(ZoneInfo('America/Sao_Paulo')):%Y%m%d_%H%M}.pdf"'})

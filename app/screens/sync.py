@@ -7,6 +7,9 @@ import shutil
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
+
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from app.services import config_store as store
@@ -36,6 +39,38 @@ class ReportResult(BaseModel):
     message:str=Field(default='',max_length=500)
 
 REPORT_MODULES={'carteira':'Carteira','reab':'Reab','producao':'Demanda e Produção'}
+
+def _parse_dt(value):
+    if not value:return None
+    try:
+        dt=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+        if dt.tzinfo is None:dt=dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError,ValueError):return None
+
+def _next_report_run(current):
+    if not current or not current.get('enabled'):return None
+    try:cfg=json.loads(current.get('schedule') or '{}')
+    except (TypeError,json.JSONDecodeError):return None
+    now=datetime.now(timezone.utc);kind=cfg.get('type')
+    base=max((d for d in (_parse_dt(current.get('last_run')),_parse_dt(current.get('updated_at'))) if d),default=now)
+    if kind=='interval':
+        value=max(1,int(cfg.get('value',1)));unit=str(cfg.get('unit','minuto(s)')).strip().lower()
+        delta=timedelta(hours=value) if unit.startswith('hora') else timedelta(minutes=value)
+        candidate=base+delta
+        while candidate<=now:candidate+=delta
+        return candidate.isoformat(timespec='seconds')
+    if kind not in ('daily','weekly'):return None
+    zone=ZoneInfo('America/Sao_Paulo');local_now=now.astimezone(zone)
+    try:hour,minute=map(int,str(cfg.get('time','06:00')).split(':'))
+    except ValueError:hour,minute=6,0
+    day_map={'seg':0,'ter':1,'qua':2,'qui':3,'sex':4,'sab':5,'dom':6}
+    allowed={day_map[d] for d in str(cfg.get('days','')).split(',') if d in day_map}
+    for offset in range(0,8):
+        candidate=(local_now+timedelta(days=offset)).replace(hour=hour,minute=minute,second=0,microsecond=0)
+        if candidate<=local_now:continue
+        if kind=='daily' or candidate.weekday() in allowed:return candidate.astimezone(timezone.utc).isoformat(timespec='seconds')
+    return None
 
 def _authorize(key):
     expected=os.getenv('SYNC_API_KEY','').strip()
@@ -73,6 +108,7 @@ def sync_config(x_sync_key:str|None=Header(None)):
 def report_config(module:str):
     if module not in REPORT_MODULES:raise HTTPException(404,'Módulo de relatório inválido.')
     current=store.get_report_export(module) or {'module':module,'destination_path':'','filename':f'{module}.pdf','schedule':'{"type":"interval","value":30,"unit":"Minuto(s)"}','enabled':0,'last_run':None,'status':'IDLE','status_message':''}
+    current=dict(current);current['next_run']=_next_report_run(current);current['server_now']=datetime.now(timezone.utc).isoformat(timespec='seconds')
     return {'ok':True,'data':current}
 
 @router.put('/api/report-config/{module}')

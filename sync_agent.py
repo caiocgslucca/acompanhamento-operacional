@@ -234,17 +234,34 @@ def export_report(client,server,key,report,state,log):
             with temporary.open('wb') as output:
                 for chunk in response.iter_bytes(1024*1024):output.write(chunk)
         if temporary.stat().st_size<4 or temporary.read_bytes()[:4]!=b'%PDF':raise ValueError('O servidor não retornou um PDF válido.')
-        os.replace(temporary,target)
+        # Windows/OneDrive/Adobe podem manter o PDF de destino bloqueado por alguns
+        # segundos. Tenta a troca atômica várias vezes antes de declarar falha.
+        replaced=False
+        last_replace_error=None
+        for attempt in range(1,11):
+            try:
+                os.replace(temporary,target)
+                replaced=True
+                break
+            except PermissionError as exc:
+                last_replace_error=exc
+                wait=min(1.5*attempt,6)
+                log.warning('PDF_DESTINO_BLOQUEADO | modulo=%s | tentativa=%s/10 | aguardando_segundos=%.1f | arquivo=%s',module,attempt,wait,target)
+                time.sleep(wait)
+        if not replaced:
+            raise PermissionError(f'PDF de destino está em uso/bloqueado: {target}. Feche o PDF/Adobe e o sincronizador tentará novamente automaticamente.') from last_replace_error
         mark_report_checked(state,remote,report.get('revision'));save_state(state)
         message=f'PDF substituído com sucesso: {target}'
         client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'SUCCESS','message':message}).raise_for_status()
         log.info('PDF_GERACAO_CONCLUIDA | modulo=%s | arquivo=%s | tamanho_kb=%.1f',module,target,target.stat().st_size/1024)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
-        mark_report_checked(state,remote,report.get('revision'));save_state(state)
+        # Falha NÃO consome a janela do agendamento. Sem marcar checked_at, o agente
+        # tenta novamente no próximo ciclo (máx. ~30 s) em vez de esperar o próximo
+        # intervalo completo.
         try:client.post(f'{server}/api/sync/report/{module}/result',headers=headers,json={'status':'ERROR','message':str(exc)[:500]}).raise_for_status()
         except Exception:pass
-        log.exception('PDF_GERACAO_FALHOU | modulo=%s | erro=%s',module,exc)
+        log.exception('PDF_GERACAO_FALHOU | modulo=%s | erro=%s | nova_tentativa_no_proximo_ciclo=true',module,exc)
     return state
 
 def run_once(config,log):

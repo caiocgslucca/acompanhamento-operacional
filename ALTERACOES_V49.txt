@@ -1,0 +1,22 @@
+V49 - Correção robusta de horários e PDF bloqueado
+
+1. Atualização da tela em tempo real
+- Carteira, Reab e Demanda e Produção passam a usar heartbeat próprio a cada 2 segundos.
+- O heartbeat atualiza simultaneamente status das fontes e próxima geração do PDF.
+- Também força atualização ao voltar para a aba, ao recuperar foco e no evento pageshow.
+- Evita intervalos sobrepostos e horários que só mudavam depois de trocar de página.
+
+2. Próxima atualização dos dados
+- next_run_for nunca retorna um horário vencido para agendamento por intervalo.
+- Se o ciclo atrasar, o cálculo avança até a próxima janela futura.
+
+3. PDF automático bloqueado no Windows/OneDrive/Adobe
+- Antes de falhar, o sincronizador tenta substituir o PDF 10 vezes com backoff.
+- Se o arquivo continuar bloqueado, a falha NÃO consome o agendamento.
+- O sincronizador tenta novamente no próximo ciclo (até ~30 segundos), em vez de esperar outro intervalo completo.
+- Log novo: PDF_DESTINO_BLOQUEADO.
+
+4. Diagnóstico do erro do log recebido
+- O PDF de produção foi gerado, mas o Windows recusou a troca do arquivo producao.pdf.
+- Erro real: WinError 5 Acesso negado no os.replace.
+- A V49 trata exatamente esse cenário.

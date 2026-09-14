@@ -1,0 +1,12 @@
+V48 - Correção bruta de filtros, PDF e horários
+
+1. Filtros aplicados passaram a ter um estado único por módulo (Carteira, Reab e Demanda e Produção).
+2. O PDF manual usa exatamente o estado já aplicado na tela, e não seleções ainda não confirmadas no menu.
+3. O download do PDF é feito por requisição direta com os parâmetros filtrados e mantém a tela aberta.
+4. A configuração do PDF automático grava exatamente os filtros aplicados do módulo atual.
+5. A próxima geração do PDF agora é calculada pelo servidor e atualizada na tela a cada 5 segundos.
+6. Após uma geração automática concluída, last_run é usado no cálculo da próxima execução; a tela deixa de manter horário vencido.
+7. Datas exibidas na interface são forçadas para America/Sao_Paulo, evitando diferença de uma hora por fuso do navegador/servidor.
+8. Horário emitido e nome dos PDFs usam America/Sao_Paulo.
+9. Última atualização passa a considerar a fonte operacional mais recente envolvida na aba.
+10. Mantidos filtros ao trocar/recarregar a aba até o usuário clicar em Limpar filtros.
