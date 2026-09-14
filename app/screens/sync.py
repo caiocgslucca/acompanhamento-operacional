@@ -30,6 +30,7 @@ class ReportConfig(BaseModel):
     filename:str=Field(min_length=1,max_length=180)
     schedule:str=Field(min_length=2,max_length=500)
     enabled:bool=False
+    filters:str=Field(default='{}',max_length=5000)
 class ReportResult(BaseModel):
     status:str=Field(pattern='^(SUCCESS|ERROR|RUNNING)$')
     message:str=Field(default='',max_length=500)
@@ -83,7 +84,11 @@ def update_report_config(module:str,payload:ReportConfig):
     try:schedule=json.loads(payload.schedule)
     except json.JSONDecodeError:raise HTTPException(422,'Agendamento inválido.')
     if schedule.get('type') not in ('manual','interval','daily','weekly'):raise HTTPException(422,'Tipo de agendamento inválido.')
-    saved=store.save_report_export(module,{'destination_path':payload.destination_path,'filename':filename,'schedule':json.dumps(schedule,ensure_ascii=False),'enabled':payload.enabled})
+    try:
+        filters=json.loads(payload.filters or '{}')
+        if not isinstance(filters,dict):raise ValueError()
+    except (json.JSONDecodeError,ValueError):raise HTTPException(422,'Filtros do PDF inválidos.')
+    saved=store.save_report_export(module,{'destination_path':payload.destination_path,'filename':filename,'schedule':json.dumps(schedule,ensure_ascii=False),'enabled':payload.enabled,'filters':json.dumps(filters,ensure_ascii=False)})
     return {'ok':True,'data':saved}
 
 @router.get('/api/sync/reports')
@@ -96,13 +101,16 @@ def sync_report_pdf(module:str,x_sync_key:str|None=Header(None)):
     _authorize(x_sync_key)
     if module=='carteira':
         from app.screens.carteira import pdf
-        return pdf([],[],[])
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        return pdf(f.get('empresa',[]),f.get('rota',[]),f.get('status',[]))
     elif module=='reab':
         from app.screens.reab import pdf
-        return pdf([],[],[])
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        return pdf(f.get('empresa',[]),f.get('rota',[]),f.get('status',[]))
     elif module=='producao':
         from app.screens.producao import pdf
-        return pdf([],[],[],[],[])
+        cfg=store.get_report_export(module) or {};f=json.loads(cfg.get('filters') or '{}')
+        return pdf(f.get('empresa',[]),f.get('classe',[]),f.get('data',[]),f.get('turno',[]),f.get('turno_rota',[]))
     else:raise HTTPException(404,'Módulo de relatório inválido.')
 
 @router.post('/api/sync/report/{module}/result')

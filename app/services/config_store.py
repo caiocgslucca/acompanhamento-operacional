@@ -44,6 +44,7 @@ def initialize():
         report_columns={row[1] for row in con.execute("PRAGMA table_info(report_exports)")}
         if 'revision' not in report_columns:con.execute("ALTER TABLE report_exports ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
         if 'updated_at' not in report_columns:con.execute("ALTER TABLE report_exports ADD COLUMN updated_at TEXT")
+        if 'filters' not in report_columns:con.execute("ALTER TABLE report_exports ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'")
         columns={row[1] for row in con.execute("PRAGMA table_info(sources)")}
         for name,sql_type,default in (("status","TEXT","'IDLE'"),("status_message","TEXT","''"),("last_run","TEXT","NULL"),("origin_path","TEXT","''"),("sync_revision","INTEGER","0")):
             if name not in columns: con.execute(f"ALTER TABLE sources ADD COLUMN {name} {sql_type} DEFAULT {default}")
@@ -84,10 +85,10 @@ def save_report_export(module,data):
     from datetime import datetime, timezone
     updated_at=datetime.now(timezone.utc).isoformat(timespec='seconds')
     with _lock, connect() as con:
-        con.execute("""INSERT INTO report_exports(module,destination_path,filename,schedule,enabled,status,status_message,revision,updated_at)
-            VALUES(?,?,?,?,?,'IDLE','Configuração salva',1,?)
-            ON CONFLICT(module) DO UPDATE SET destination_path=excluded.destination_path,filename=excluded.filename,schedule=excluded.schedule,enabled=excluded.enabled,status='IDLE',status_message='Configuração atualizada',revision=report_exports.revision+1,updated_at=excluded.updated_at""",
-            (module,data['destination_path'].strip(),data['filename'].strip(),data['schedule'].strip(),int(data.get('enabled',False)),updated_at))
+        con.execute("""INSERT INTO report_exports(module,destination_path,filename,schedule,enabled,status,status_message,revision,updated_at,filters)
+            VALUES(?,?,?,?,?,'IDLE','Configuração salva',1,?,?)
+            ON CONFLICT(module) DO UPDATE SET destination_path=excluded.destination_path,filename=excluded.filename,schedule=excluded.schedule,enabled=excluded.enabled,status='IDLE',status_message='Configuração atualizada',revision=report_exports.revision+1,updated_at=excluded.updated_at,filters=excluded.filters""",
+            (module,data['destination_path'].strip(),data['filename'].strip(),data['schedule'].strip(),int(data.get('enabled',False)),updated_at,data.get('filters','{}')))
     logger.info('REPORT_EXPORT_SAVED | modulo=%s | ativo=%s',module,bool(data.get('enabled')))
     return get_report_export(module)
 
